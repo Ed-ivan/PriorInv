@@ -77,7 +77,7 @@ def dilate(image, kernel_size, stride=1, padding=0):
 def diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False,
                    inference_stage=True, prox="l0", quantile=0.7,
                    image_enc=None, recon_lr=1, recon_t=400,
-                   inversion_guidance=True, x_stars=None, i=0, noise_loss=None, is_dynamic_scale=False,dynamic_threshold=0.7,**kwargs):
+                   inversion_guidance=True, x_stars=None, i=0, noise_loss=None, is_dynamic_scale=False,dynamic_threshold=0.7,capture_noise=None,**kwargs):
                     # inversion_guidance = False, x_stars = None, i = 0, noise_loss = None, ** kwargs):
     bs = latents.shape[0]
     if low_resource:
@@ -103,6 +103,7 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
         score_mask = torch.where(score.abs()<threshold,0.0, 1.0)
         #TODO: thresold 需要换一下
         guidance_scale = score_mask * (guidance_scale-1)+1.0
+        if capture_noise is not None: capture_noise(noise_prediction_text,noise_pred_uncond)
         
     if inference_stage and prox is not None:
         if prox == 'l1':
@@ -150,53 +151,6 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
     if controller is not None:
         latents = controller.step_callback(latents)
     return latents
-
-@torch.no_grad()
-def diffusion_step_with_dynamic_guidance(model, controller, latents, context, t, guidance_scale, low_resource=False,
-                   inference_stage=True, prox="l0", quantile=0.7,
-                   image_enc=None, recon_lr=1, recon_t=400,
-                   inversion_guidance=True, x_stars=None, i=0, noise_loss=None, **kwargs):
-                    # inversion_guidance = False, x_stars = None, i = 0, noise_loss = None, ** kwargs):
-                    # TODO: guidance_scale has linear scaled
-    bs = latents.shape[0]
-    if low_resource:
-        noise_pred_uncond = model.unet(latents, t, encoder_hidden_states=context[0])["sample"]
-        noise_prediction_text = model.unet(latents, t, encoder_hidden_states=context[1])["sample"]
-    else:
-        latents_input = torch.cat([latents] * 2)
-        noise_pred = model.unet(latents_input, t, encoder_hidden_states=context)["sample"]
-        noise_pred_uncond, noise_prediction_text = noise_pred.chunk(2)
-    step_kwargs = {
-        'ref_image': None,
-        'recon_lr': 0,
-        'recon_mask': None,
-    }
-    mask_edit = None
-    #TODO:是不是这里面    embeddings_un + scale(embeddings_text - embeddings_un) 是不是有点放大了 这个 embeddings ？？ 
-    #  然后里面应该按照 proximal 的方式？？ 
-    #  
-    score_delta = noise_prediction_text - noise_pred_uncond
-    if quantile > 0:
-        threshold = score_delta.abs().quantile(quantile)
-    else:
-        threshold = -quantile  # if quantile is negative, use it as a fixed threshold
-        score_delta -= score_delta.clamp(-threshold, threshold)
-    if (recon_t > 0 and t < recon_t) or (recon_t < 0 and t > -recon_t):
-        step_kwargs['ref_image'] = image_enc
-        step_kwargs['recon_lr'] = recon_lr
-        mask_edit = (score_delta.abs() > threshold).float()
-        radius = 1
-        mask_edit = dilate(mask_edit.float(), kernel_size=2*radius+1, padding=radius)
-        step_kwargs['recon_mask'] = 1 - mask_edit
-    guidance_scale = (guidance_scale-1) * mask_edit+1
-    noise_pred = noise_pred_uncond + guidance_scale * (noise_prediction_text - noise_pred_uncond)
-    latents = model.scheduler.step(noise_pred, t, latents, **step_kwargs)["prev_sample"]
-
-    if controller is not None:
-        latents = controller.step_callback(latents)
-    return latents
-
-
 
 
 def latent2image(vae, latents):
@@ -428,6 +382,8 @@ def get_time_words_attention_alpha(prompts, num_steps,
                     alpha_time_words = update_alpha_time_word(alpha_time_words, item, i, ind)
     alpha_time_words = alpha_time_words.reshape(num_steps + 1, len(prompts) - 1, 1, 1, max_num_words)
     return alpha_time_words
+
+
 
 
 

@@ -351,3 +351,54 @@ def load_image(image_path, device):
     image = T.CenterCrop(512)(image)
     image = image.to(device)
     return image
+
+
+
+
+
+def save_attention_map(tokenizer,attention_store: AttentionStore, res: int,prompts:dict,from_where: List[str], filename,select: int = 0,is_cross: bool = True) :
+   
+    tokens = tokenizer.encode(prompts[select])
+    decoder = tokenizer.decode
+    attention_maps = aggregate_attention(attention_store, res, from_where, True, select)
+    images = []
+    if not is_cross:
+        max_com=10
+        attention_maps = aggregate_attention(attention_store, res, from_where, False, select).numpy().reshape((res ** 2, res ** 2))
+        u, s, vh = np.linalg.svd(attention_maps - np.mean(attention_maps, axis=1, keepdims=True))
+        images = []
+        for i in range(max_com):
+            image = vh[i].reshape(res, res)
+            image = image - image.min()
+            image = 255 * image / image.max()
+            image = np.repeat(np.expand_dims(image, axis=2), 3, axis=2).astype(np.uint8)
+            image = Image.fromarray(image).resize((256, 256))
+            image = np.array(image)
+            images.append(image)
+    else :
+        for i in range(len(tokens)):
+            image = attention_maps[:, :, i]
+            image = 255 * image / image.max()
+            image = image.unsqueeze(-1).expand(*image.shape, 3)
+            image = image.numpy().astype(np.uint8)
+            image = np.array(Image.fromarray(image).resize((256, 256)))
+            image = ptp_utils.text_under_image(image, decoder(int(tokens[i])))
+            images.append(image)
+
+    num_images = len(images)
+    cols = int(np.ceil(np.sqrt(num_images)))
+    rows = int(np.ceil(num_images / cols))
+
+    # 创建一个空白的大图像
+    total_width = cols * 256
+    total_height = rows * 256
+    combined_image = Image.new('RGB', (total_width, total_height))
+
+    # 将每个图像粘贴到大图像中
+    for i, image in enumerate(images):
+        x_offset = (i % cols) * 256
+        y_offset = (i // cols) * 256
+        combined_image.paste(Image.fromarray(image), (x_offset, y_offset))
+    # 保存大图像
+    combined_image.save(filename)
+    

@@ -29,7 +29,7 @@ def linear_schedule_old(t, guidance_scale, tau1=0.05, tau2=0.9):
 
     return gamma
 
-def linear_schedule(t, guidance_scale, tau1=0.1, tau2=1.0):
+def linear_schedule(t, guidance_scale, tau1=0.1, tau2=0.95):
     t = t / 1000
     assert t<1.0,"here in linear_schedule , some thing is wrong!"
     if t <= tau1:
@@ -139,9 +139,9 @@ class Editor:
         del SPD_inversion
 
         torch.cuda.empty_cache()
-
-        controller = make_controller(self.ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
-                                 blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
+        controller = None
+        # controller = make_controller(self.ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
+        #                          blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
         #reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
         #image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
 
