@@ -313,7 +313,7 @@ def aggregate_attention(attention_store: AttentionStore, res: int, from_where: L
     num_pixels = res ** 2
     for location in from_where:
         for item in attention_maps[f"{location}_{'cross' if is_cross else 'self'}"]:
-            if item.shape[1] == num_pixels:
+            if item.shape[1] == num_pixels: 
                 cross_maps = item.reshape(len(prompts), -1, res, res, item.shape[-1])[select]
                 out.append(cross_maps)
     out = torch.cat(out, dim=0)
@@ -354,13 +354,17 @@ def load_image(image_path, device):
 
 
 
-
+'''
+  File "/root/autodl-tmp/CFGInv/utils/control_utils.py", line 317, in aggregate_attention
+    cross_maps = item.reshape(len(prompts), -1, res, res, item.shape[-1])[select]
+RuntimeError: shape '[51, -1, 16, 16, 77]' is invalid for input of size 315392
+'''
 
 def save_attention_map(tokenizer,attention_store: AttentionStore, res: int,prompts:dict,from_where: List[str], filename,select: int = 0,is_cross: bool = True) :
    
     tokens = tokenizer.encode(prompts[select])
     decoder = tokenizer.decode
-    attention_maps = aggregate_attention(attention_store, res, from_where, True, select)
+    attention_maps = aggregate_attention(attention_store, res, from_where, True, select,prompts)
     images = []
     if not is_cross:
         max_com=10

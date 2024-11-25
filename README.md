@@ -1,10 +1,3 @@
-## Source Prompt Disentangled Inversion for Boosting Image Editability with  Diffusion Models
-
-<a href='http://arxiv.org/abs/2403.11105'><img src='https://img.shields.io/badge/arXiv-2403.11105-b31b1b.svg'></a> &nbsp;&nbsp;
-
-[Ruibin Li](https://github.com/leeruibin)<sup>1</sup> | [Ruihuang Li](https://scholar.google.com/citations?user=8CfyOtQAAAAJ&hl=zh-CN)<sup>1</sup> |[Song Guo](https://scholar.google.com/citations?user=Ib-sizwAAAAJ&hl=en)<sup>2</sup> | [Lei Zhang](https://www4.comp.polyu.edu.hk/~cslzhang/)<sup>1*</sup>
-
-<sup>1</sup>The Hong Kong Polytechnic University, <sup>2</sup>The Hong Kong University of Science and Technology.
 
 ## 🔎 Overview framework
 
@@ -65,24 +58,4 @@ python run_SPDInv_ELITE.py --input xxx --source [source prompt] --target [target
 
 ## Editing cases with ELITE
 <div  align="center"> <img src="./figures/cases_ELITE.jpg" width = "600" alt="ELITE" align=center /> </div>
-
-
-## Citation
-
-```
-@article{li2024source,
-  title={Source Prompt Disentangled Inversion for Boosting Image Editability with Diffusion Models},
-  author={Li, Ruibin and Li, Ruihuang and Guo, Song and Zhang, Lei},
-  journal={arXiv preprint arXiv:2403.11105},
-  year={2024}
-}
-```
-
-## Acknowledgements
-
-This code is built on [diffusers](https://github.com/huggingface/diffusers/) version of [Stable Diffusion](https://github.com/CompVis/stable-diffusion).
-
-Meanwhile, the code is heavily based on the [Prompt-to-Prompt](https://github.com/google/prompt-to-prompt), [Null-Text Inversion](https://github.com/google/prompt-to-prompt), [MasaCtrl](https://github.com/TencentARC/MasaCtrl), [ProxEdit](https://github.com/phymhan/prompt-to-prompt), [ELITE](https://github.com/csyxwei/ELITE), [Plug-and-Play](https://github.com/MichalGeyer/plug-and-play), [DirectInversion](https://github.com/cure-lab/PnPInversion), thanks to all the contributors!.
-
-
 

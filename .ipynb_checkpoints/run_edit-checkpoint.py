@@ -153,7 +153,7 @@ def P2P_inversion_and_recontruction(
 def parse_args():
     parser = argparse.ArgumentParser(description="Input your dataset path")
     parser.add_argument('--data_path', type=str, default="ple_images/") # the editing category that needed to run
-    parser.add_argument('--edit_category_list', nargs = '+', type=str, default=["1"]) # the editing category that needed to run "0","1","2","3","4","5","6","7","8",
+    parser.add_argument('--edit_category_list', nargs = '+', type=str, default=["0"]) # the editing category that needed to run "0","1","2","3","4","5","6","7","8",
     parser.add_argument(
         "--K_round", 
         type=int,
@@ -196,7 +196,7 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=str,
-        default="outputs/1121_prior_45_4e_guidace_0.05_0.9_p2p",
+        default="outputs/1123_prior_45_4e_guidace_0.05_0.9_debug",
         help="Save editing results",
     )
     args = parser.parse_args()

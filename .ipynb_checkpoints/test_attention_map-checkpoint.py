@@ -27,40 +27,10 @@ from utils.control_utils import load_512, make_controller,save_attention_map
 from P2P.CFGInv_withloss import CFGInversion
 
 
-
 @torch.no_grad
-def save_noise(noise_pred_con, noise_pred_ucon, output_dir='output_noise'):
-    assert output_dir is not None ,"noise_save_dir can not be empty"
-    resize = transforms.Resize((256, 256))
-   
-    noise_delta = noise_pred_con - noise_pred_ucon
-    
-    noise_pred_con_mean = torch.mean(noise_pred_con, dim=1, keepdim=True)
-    noise_pred_ucon_mean = torch.mean(noise_pred_ucon, dim=1, keepdim=True)
-    noise_delta_mean = torch.mean(noise_delta,dim=1,keepdim=True)    
-    
-    noise_pred_con_mean = noise_pred_con_mean.expand(-1, 3, -1, -1)
-    noise_pred_ucon_mean = noise_pred_ucon_mean.expand(-1, 3, -1, -1)
-    noise_delta_mean = noise_delta_mean.expand(-1,3,-1,-1)
-
-    noise_pred_con_mean = resize(noise_pred_con_mean)
-    noise_pred_ucon_mean = resize(noise_pred_ucon_mean)
-    noise_delta_mean = resize(noise_delta_mean)
-
-    con_image = noise_pred_con_mean[0].cpu().numpy().transpose(1, 2, 0)
-    ucon_image = noise_pred_ucon_mean[0].cpu().numpy().transpose(1, 2, 0)
-    delta_image = noise_delta_mean[0].cpu().numpy().transpose(1, 2, 0)
-            
-    con_image = ((con_image - con_image.min()) / (con_image.max() - con_image.min()) * 255).astype(np.uint8)
-    ucon_image = ((ucon_image - ucon_image.min()) / (ucon_image.max() - ucon_image.min()) * 255).astype(np.uint8)
-    delta_image = ((delta_image - delta_image.min()) / (delta_image.max() - delta_image.min()) * 255).astype(np.uint8)
-
-    Image.fromarray(con_image).save(f"{output_dir}/noise_pred_con_{i}.png")
-    Image.fromarray(ucon_image).save(f"{output_dir}/noise_pred_ucon_{i}.png")
-    Image.fromarray(delta_image).save(f"{output_dir}/noise_delta_{i}.png")
-
-    
-
+def capture_noise(noise_pred_con ,noise_pred_ucon):
+    #save_noise(noise_pred_con,noise_pred_ucon,noise_save_dir)
+    pass 
 
 
 @torch.no_grad()
@@ -111,9 +81,6 @@ def editing_p2p(
     noise_ucon_list =[]
     noise_con_list =[]
     # callback func for  save noise_delta 
-    @torch.no_grad
-    def capture_noise(noise_pred_con ,noise_pred_ucon):
-        save_noise(noise_pred_con,noise_pred_ucon,noise_save_dir)
 
 
     
@@ -126,14 +93,14 @@ def editing_p2p(
             # TODO：应该在里面 重新写一下吧 ？  
             latents = ptp_utils.diffusion_step(model, controller, latents, context, t, guidance_scale,
                                                low_resource=False,
-                                               inference_stage=inference_stage, x_stars=x_stars, i=i, capture_noise,**kwargs)
+                                               inference_stage=inference_stage, x_stars=x_stars,i=i,**kwargs)
     if return_type == 'image':
         image = ptp_utils.latent2image(model.vae, latents)
         
     else:
         image = latents
         
-    return image, latent,noise_delta_list,noise_ucon_list,noise_con_list
+    return image, latent
 
 
 @torch.no_grad()
@@ -195,19 +162,20 @@ def show_attention_map(
                             guidance_scale=guidance_scale,
                             uncond_embeddings=uncond_embeddings,
                             inversion_guidance=use_inversion_guidance, x_stars=x_stars, )
+    attn = controller.get_average_attention()
+    for key in controller.attention_store:
+        for item in controller.attention_store[key]:
+            print(f"here {key} dim is ",item.size())
 
-    # attention_map_filename 
-    # noise_filename   我想一下 应该怎么写呢？  最好是保存到对应的位置上？？  
-    Image.fromarray(np.concatenate(images, axis=1)).save(f"{output_dir}/{sample_count}_P2P_{filename}")
-    save_attention_map(tokenizer,controller,res=0,prompts= prompts,filename = filename,from_where=["up", "down"])
-    # (tokenizer,attention_store: AttentionStore, res: int,prompts:dict,from_where: List[str], filename,select: int = 0,is_cross: bool = True
+
+    
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Input your image and editing prompt.")
     parser.add_argument(
         "--input",
         type=str,
-        default="images/000000000138.jpg",
+        default="images/000000000001.jpg",
         # /home/user/jin/SPDInv/images/gnochi_mirror.jpeg
         # images/000000000008.jpg
         # images/000000000138.jpg
@@ -217,7 +185,7 @@ def parse_args():
     parser.add_argument(
         "--source",
         type=str,
-        default="a cat",
+        default="a round cake with orange frosting on a wooden plate",
         # required=True,
         # a round cake with orange frosting on a wooden plate A cat sitting next to a mirror
         # a Golden Retriever standing on the groud
@@ -226,7 +194,7 @@ def parse_args():
     parser.add_argument(
         "--target",
         type=str,
-        default= " a dog",
+        default= "a square cake with orange frosting on a wooden plate",
         #"a Golden Retriever",
         # a silver cat  sculpture standing on the groud
         # required=True,
@@ -236,7 +204,7 @@ def parse_args():
     parser.add_argument(
         "--blended_word",
         type=str,
-        default="cat dog",
+        default="cake cake",
         help="Blended word needed for P2P",
     )
     parser.add_argument(
@@ -317,8 +285,34 @@ if __name__ == "__main__":
     params['output_dir'] = args.output
     params['image_path'] = args.input
     #P2P_inversion_and_recontruction(**params)
+    show_attention_map(**params)
+    #  HF_ENDPOINT=https://hf-mirror.com python test_attention_map.py  
 
 
 
 
 
+
+# here down_cross dim is  torch.Size([16, 1024, 77])
+# here down_cross dim is  torch.Size([16, 1024, 77])
+# here down_cross dim is  torch.Size([16, 256, 77])
+# here down_cross dim is  torch.Size([16, 256, 77])
+# here mid_cross dim is  torch.Size([16, 64, 77])
+# here up_cross dim is  torch.Size([16, 256, 77])
+# here up_cross dim is  torch.Size([16, 256, 77])
+# here up_cross dim is  torch.Size([16, 256, 77])
+# here up_cross dim is  torch.Size([16, 1024, 77])
+# here up_cross dim is  torch.Size([16, 1024, 77])
+# here up_cross dim is  torch.Size([16, 1024, 77])
+
+
+# here down_self dim is  torch.Size([16, 1024, 1024])
+# here down_self dim is  torch.Size([16, 1024, 1024])
+# here down_self dim is  torch.Size([16, 256, 256])
+# here down_self dim is  torch.Size([16, 256, 256])
+# here mid_self dim is  torch.Size([16, 64, 64])
+# here up_self dim is  torch.Size([16, 256, 256])
+# here up_self dim is  torch.Size([16, 256, 256])
+# here up_self dim is  torch.Size([16, 256, 256])
+# here up_self dim is  torch.Size([16, 1024, 1024])
+# here up_self dim is  torch.Size([16, 1024, 1024])
