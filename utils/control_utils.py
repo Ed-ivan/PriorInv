@@ -215,6 +215,7 @@ class AttentionReplace(AttentionControlEdit):
     def replace_cross_attention(self, attn_base, att_replace):
         return torch.einsum('hpw,bwn->bhpn', attn_base, self.mapper)
 
+        #self.mapper 是个什么玩应？ ， 
     def __init__(self, prompts, num_steps: int, cross_replace_steps: float, self_replace_steps: float,
                  local_blend: Optional[LocalBlend] = None, tokenizer=None):
         super(AttentionReplace, self).__init__(prompts, num_steps, cross_replace_steps, self_replace_steps, local_blend)
@@ -268,6 +269,9 @@ Tuple[float, ...]], tokenizer=None):
     return equalizer
 
 
+#那么这里就是做一个插入的嘛？ 直接重新计算一下cross attention_map  edit的 batch_size 里面都需要计算 ? 那这个地方还得在想下  
+
+
 def make_controller(pipeline, prompts: List[str], is_replace_controller: bool, cross_replace_steps: Dict[str, float],
                     self_replace_steps: float, blend_words=None, equilizer_params=None,
                     num_ddim_steps=20) -> AttentionControlEdit:
@@ -292,7 +296,6 @@ def make_controller(pipeline, prompts: List[str], is_replace_controller: bool, c
         controller = AttentionReweight(prompts, num_ddim_steps, cross_replace_steps=cross_replace_steps,
                                        self_replace_steps=self_replace_steps, equalizer=eq, local_blend=lb,
                                        controller=controller)
-        
     return controller
 
 

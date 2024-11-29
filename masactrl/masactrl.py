@@ -159,7 +159,7 @@ class MutualSelfAttentionControlMask(MutualSelfAttentionControl):
 
         out = torch.cat([out_u_source, out_u_target, out_c_source, out_c_target], dim=0)
         return out
-
+ 
 
 class MutualSelfAttentionControlMaskAuto(MutualSelfAttentionControl):
     def __init__(self, start_step=4, start_layer=10, layer_idx=None, step_idx=None, total_steps=50, thres=0.1, ref_token_idx=[1], cur_token_idx=[1], mask_save_dir=None):
@@ -196,6 +196,7 @@ class MutualSelfAttentionControlMaskAuto(MutualSelfAttentionControl):
         self.self_attns = []
         self.cross_attns = []
 
+    #
     def attn_batch(self, q, k, v, sim, attn, is_cross, place_in_unet, num_heads, **kwargs):
         B = q.shape[0] // num_heads
         H = W = int(np.sqrt(q.shape[1]))

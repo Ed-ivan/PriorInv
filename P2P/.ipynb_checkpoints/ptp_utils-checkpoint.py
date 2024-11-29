@@ -73,11 +73,13 @@ def dilate(image, kernel_size, stride=1, padding=0):
     
     return dilated_image
 
+
+
 @torch.no_grad()
 def diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False,
                    inference_stage=True, prox="l0", quantile=0.7,
                    image_enc=None, recon_lr=1, recon_t=400,
-                   inversion_guidance=True, x_stars=None, i=0, noise_loss=None, is_dynamic_scale=True,dynamic_threshold=0.7,capture_noise=None,**kwargs):
+                   inversion_guidance=True, x_stars=None, i=0, noise_loss=None, is_dynamic_scale=True,dynamic_threshold=3e-03,capture_noise=None,**kwargs):
                     # inversion_guidance = False, x_stars = None, i = 0, noise_loss = None, ** kwargs):
     bs = latents.shape[0]
     if low_resource:
@@ -101,9 +103,10 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
         score= noise_prediction_text - noise_pred_uncond
         score_ori = score
         score_mask = torch.where(score.abs()<dynamic_threshold,0.0, 1.0)
-        #TODO: thresold 需要换一下
+        #TODO: thresold 需要换一下  我搞错了应该看1的情况
         guidance_scale = score_mask * (guidance_scale-1)+1.0
-        if capture_noise is not None: capture_noise(noise_prediction_text,noise_pred_uncond)
+        breakpoint()
+        if capture_noise is not None: capture_noise(noise_prediction_text,noise_pred_uncond,t)
         
     if inference_stage and prox is not None:
         if prox == 'l1':
@@ -151,6 +154,23 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
     if controller is not None:
         latents = controller.step_callback(latents)
     return latents
+
+
+
+
+
+def text_under_image(image: np.ndarray, text: str, text_color: Tuple[int, int, int] = (0, 0, 0)):
+    h, w, c = image.shape
+    offset = int(h * .2)
+    img = np.ones((h + offset, w, c), dtype=np.uint8) * 255
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    # font = ImageFont.truetype("/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf", font_size)
+    img[:h] = image
+    textsize = cv2.getTextSize(text, font, 1, 2)[0]
+    text_x, text_y = (w - textsize[0]) // 2, h + offset - textsize[1] // 2
+    cv2.putText(img, text, (text_x, text_y ), font, 1, text_color, 2)
+    return img
+
 
 
 def latent2image(vae, latents):
@@ -270,6 +290,8 @@ def register_attention_control(model, controller):
             context = context if is_cross else x
             k = self.to_k(context)
             v = self.to_v(context)
+
+            # 【2,8,1024,77】  那应该怎么用啊 ，还是 8 头的
             q = self.reshape_heads_to_batch_dim(q)
             k = self.reshape_heads_to_batch_dim(k)
             v = self.reshape_heads_to_batch_dim(v)

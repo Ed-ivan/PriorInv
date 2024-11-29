@@ -139,9 +139,9 @@ class Editor:
         del SPD_inversion
 
         torch.cuda.empty_cache()
-        #controller = None
-        controller = make_controller(self.ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
-                                  blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
+        controller = None
+        # controller = make_controller(self.ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
+        #                           blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
         #reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
         #image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
 
@@ -181,7 +181,7 @@ class Editor:
                     context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
                 else:
                     context = torch.cat([uncond_embeddings_, text_embeddings])
-                guidance_scale=linear_schedule(t, guidance_scale)
+                #guidance_scale=linear_schedule(t, guidance_scale)
                 latents = ptp_utils.diffusion_step(self.ldm_stable, controller, latents, context, t, guidance_scale,
                                                low_resource=False,
                                                inference_stage=inference_stage, x_stars=x_stars, i=i, **kwargs)

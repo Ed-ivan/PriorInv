@@ -73,11 +73,13 @@ def dilate(image, kernel_size, stride=1, padding=0):
     
     return dilated_image
 
+
+
 @torch.no_grad()
 def diffusion_step(model, controller, latents, context, t, guidance_scale, low_resource=False,
-                   inference_stage=True, prox="l0", quantile=0.7,
+                   inference_stage=True, prox=None, quantile=0.7,
                    image_enc=None, recon_lr=1, recon_t=400,
-                   inversion_guidance=True, x_stars=None, i=0, noise_loss=None, is_dynamic_scale=True,dynamic_threshold=0.7,capture_noise=None,**kwargs):
+                   inversion_guidance=True, x_stars=None, i=0, noise_loss=None, is_dynamic_scale=False,dynamic_threshold=1.5e-03,capture_noise=None,**kwargs):
                     # inversion_guidance = False, x_stars = None, i = 0, noise_loss = None, ** kwargs):
     bs = latents.shape[0]
     if low_resource:
@@ -93,18 +95,36 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
         'recon_mask': None,
     }
     mask_edit = None
-    #TODO:是不是这里面    embeddings_un + scale(embeddings_text - embeddings_un) 是不是有点放大了 这个 embeddings ？？ 
-    #  然后里面应该按照 proximal 的方式？？ 
-    #  
-
     if is_dynamic_scale:
         score= noise_prediction_text - noise_pred_uncond
         score_ori = score
         score_mask = torch.where(score.abs()<dynamic_threshold,0.0, 1.0)
-        #TODO: thresold 需要换一下
-        guidance_scale = score_mask * (guidance_scale-1)+1.0
+        #TODO: thresold 需要换一下  我搞错了应该看1的情况
+        guidance_scale = score_mask * guidance_scale
+        # breakpoint()
         if capture_noise is not None: capture_noise(noise_prediction_text,noise_pred_uncond,t)
         
+        #TODO: idea2 :region-based 
+        #attn_dict = controller.get_average_attention()
+        #if mask_generator is not None: mask_generator(attn_dict) 
+        
+        #TODO: vector projection
+        normalizenoise = noise_pred
+        # 获取归一化后的 noise embeddings 的形状
+        b, n, h, w = normalizenoise.shape
+        print(b, n, h, w)
+        normnoise_src = normalizenoise[0].view(n, h * w, 1)
+        normnoise_src = torch.nn.functional.normalize(normnoise_src, dim=1)
+        # 调整 prompt embeddings 的形状为 (n, 1, h*w)
+        viewprompt = normalizenoise[1].view(n, 1, h * w)
+        projnoise = torch.matmul(viewprompt, normnoise_src)
+        projnoise = projnoise * normnoise_src    
+        projedit = normalizenoise[1] - projnoise.view(1, n, h, w)
+        noise_pred[1] =  projedit
+        breakpoint()
+        
+        
+    
     if inference_stage and prox is not None:
         if prox == 'l1':
             score_delta = noise_prediction_text - noise_pred_uncond
@@ -150,11 +170,9 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
         latents = torch.concat((latents[:1]+noise_loss[:1],latents[1:]))
     if controller is not None:
         latents = controller.step_callback(latents)
+
+    # 修改的话应该会比较方便 ， 就是直接使用controller的cross-attention-map就行了，但是问题是 尺寸的问题， 选择什么呢》？ 直接求平均
     return latents
-
-
-
-
 
 def text_under_image(image: np.ndarray, text: str, text_color: Tuple[int, int, int] = (0, 0, 0)):
     h, w, c = image.shape
