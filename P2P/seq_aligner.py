@@ -164,12 +164,13 @@ def get_replacement_mapper_(x: str, y: str, tokenizer, max_len=77):
     while i < max_len and j < max_len:
         if cur_inds < len(inds_source) and inds_source[cur_inds][0] == i:
             inds_source_, inds_target_ = inds_source[cur_inds], inds_target[cur_inds]
-            if len(inds_source_) == len(inds_target_):
+            if len(inds_source_) == len(inds_target_): 
                 mapper[inds_source_, inds_target_] = 1
-            else:
+            else: 
                 ratio = 1 / len(inds_target_)
                 for i_t in inds_target_:
                     mapper[inds_source_, i_t] = ratio
+                #因为这里可能存在的并不只是一个
             cur_inds += 1
             i += len(inds_source_)
             j += len(inds_target_)
@@ -183,6 +184,7 @@ def get_replacement_mapper_(x: str, y: str, tokenizer, max_len=77):
             j += 1
 
     return torch.from_numpy(mapper).float()
+    # 表示的是  对于其他的应该是由原始文本的谁进行替换
 
 
 

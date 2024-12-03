@@ -39,7 +39,28 @@ def linear_schedule(t, guidance_scale, tau1=0.2, tau2=0.8):
 
     return guidance_scale
 
+
+
+
+
+
+
+
 class Editor:
+
+    def project_text_embeddings(text_embeddings:torch.Tensor,alpha,textalpha):
+        assert text_embeddings.shape[0]>1 , 'text_embeddings must have more than src and target'
+        normalizetext=torch.nn.functional.normalize(text_embeddings,dim=2)
+        b,n,c=normalizetext.shape
+        print(b,n,c)
+        normtext=normalizetext.view(n,c,1)
+        viewprompt=prompt_embeddings.view(n,1,c)
+        projtext=torch.matmul(viewprompt,normtext)
+        projtext=projtext*normtext
+        projtext=projtext.view(1,n,c)
+        projedit=prompt_embeddings-projtext
+        breakpoint()
+
     def __init__(self, method_list, device,delta_threshold,enable_threshold=True, num_ddim_steps=50,K_round=25,learning_rate=0.001) -> None:
         self.device=device
         self.method_list=method_list
@@ -139,9 +160,9 @@ class Editor:
         del SPD_inversion
 
         torch.cuda.empty_cache()
-        controller = None
-        # controller = make_controller(self.ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
-        #                           blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
+        #controller = None
+        controller = make_controller(self.ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
+                                  blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
         #reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
         #image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
 
@@ -162,7 +183,7 @@ class Editor:
         return_tensors="pt",
         )
         text_embeddings = self.ldm_stable.text_encoder(text_input.input_ids.to(self.ldm_stable.device))[0]
-        # [2,77.768] 
+        # [2,77.768]  [src , tar]
         max_length = text_input.input_ids.shape[-1]
         if uncond_embeddings is None:
             uncond_input = self.ldm_stable.tokenizer(

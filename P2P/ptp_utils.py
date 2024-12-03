@@ -67,10 +67,8 @@ def dilate(image, kernel_size, stride=1, padding=0):
     """
     # Ensure the image is binary
     assert image.max() <= 1 and image.min() >= 0
-    
     # Get the maximum value in each neighborhood
-    dilated_image = F.max_pool2d(image, kernel_size, stride, padding)
-    
+    dilated_image = F.max_pool2d(image, kernel_size, stride, padding)    
     return dilated_image
 
 
@@ -96,32 +94,30 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
     }
     mask_edit = None
     if is_dynamic_scale:
-        score= noise_prediction_text - noise_pred_uncond
-        score_ori = score
-        score_mask = torch.where(score.abs()<dynamic_threshold,0.0, 1.0)
-        #TODO: thresold 需要换一下  我搞错了应该看1的情况
-        guidance_scale = score_mask * guidance_scale
-        # breakpoint()
-        if capture_noise is not None: capture_noise(noise_prediction_text,noise_pred_uncond,t)
+        #TODO: score -based dynamic guidance_scale is not work
+        # score= noise_prediction_text - noise_pred_uncond
+        # score_ori = score
+        # score_mask = torch.where(score.abs()<dynamic_threshold,0.0, 1.0)
+        # guidance_scale = score_mask * guidance_scale
+        # if capture_noise is not None: capture_noise(noise_prediction_text,noise_pred_uncond,t)
         
-        #TODO: idea2 :region-based 
+        #TODO: idea2 :region-based  not finished 
         #attn_dict = controller.get_average_attention()
         #if mask_generator is not None: mask_generator(attn_dict) 
         
-        #TODO: vector projection
-        normalizenoise = noise_pred
-        # 获取归一化后的 noise embeddings 的形状
-        b, n, h, w = normalizenoise.shape
-        print(b, n, h, w)
-        normnoise_src = normalizenoise[0].view(n, h * w, 1)
-        normnoise_src = torch.nn.functional.normalize(normnoise_src, dim=1)
-        # 调整 prompt embeddings 的形状为 (n, 1, h*w)
-        viewprompt = normalizenoise[1].view(n, 1, h * w)
-        projnoise = torch.matmul(viewprompt, normnoise_src)
-        projnoise = projnoise * normnoise_src    
-        projedit = normalizenoise[1] - projnoise.view(1, n, h, w)
-        noise_pred[1] =  projedit
-        breakpoint()
+        #TODO: idea3: vector projection  not work  the result is so distorted!
+        # normalizenoise = noise_prediction_text
+        # b, c, h, w = normalizenoise.shape
+        # print(b, c, h, w)
+        # normnoise_src = normalizenoise[0].permute(1, 2, 0).view(c, h * w, 1)
+        # normnoise_src = torch.nn.functional.normalize(normnoise_src, dim=1)
+        
+        # viewprompt = normalizenoise[1].view(c, 1, h * w)
+        # projnoise = torch.matmul(viewprompt, normnoise_src)
+        # projnoise = projnoise * normnoise_src    
+        # projedit = normalizenoise[1] - projnoise.view(1, c, h, w)
+        # noise_prediction_text[1] =  projedit
+        pass
         
         
     

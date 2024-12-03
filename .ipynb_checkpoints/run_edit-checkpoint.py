@@ -196,7 +196,7 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=str,
-        default="outputs/test_dynamic_guidance",
+        default="outputs/test_dynamic_guidance_1201",
         help="Save editing results",
     )
     args = parser.parse_args()

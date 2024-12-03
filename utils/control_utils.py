@@ -18,6 +18,7 @@ class LocalBlend:
     def get_mask(self, maps, alpha, use_pool):
         k = 1
         maps = (maps * alpha).sum(-1).mean(1)
+        #  是针对于整个的prompts的
         if use_pool:
             maps = nnf.max_pool2d(maps, (k * 2 + 1, k * 2 + 1), (1, 1), padding=(k, k))
         mask = nnf.interpolate(maps, size=LATENT_SIZE)
@@ -28,22 +29,27 @@ class LocalBlend:
 
     def __call__(self, x_t, attention_store):
         self.counter += 1
-        if self.counter > self.start_blend:
 
+        if self.counter > self.start_blend:
             maps = attention_store["down_cross"][2:4] + attention_store["up_cross"][:3]
             maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 16, 16, MAX_NUM_WORDS) for item in maps]
             maps = torch.cat(maps, dim=1)
             mask = self.get_mask(maps, self.alpha_layers, True)
+            # maps size is : ([2, 40, 1, 16, 16, 77])
+            #mask size is [2,4,64,64] 
             if self.substruct_layers is not None:
                 maps_sub = ~self.get_mask(maps, self.substruct_layers, False)
                 mask = mask * maps_sub
             mask = mask.float()
+            # 原来如此啊
             x_t = x_t[:1] + mask * (x_t - x_t[:1])
         return x_t
 
     def __init__(self, prompts: List[str], words: [List[List[str]]], substruct_words=None, start_blend=0.2, th=(.3, .3),
                  tokenizer=None, num_ddim_steps=20):
         alpha_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
+        breakpoint()
+        mapper = seq_aligner.get_replacement_mapper(prompts, tokenizer).to(device)
         for i, (prompt, words_) in enumerate(zip(prompts, words)):
             if type(words_) is str:
                 words_ = [words_]
@@ -65,7 +71,7 @@ class LocalBlend:
         self.alpha_layers = alpha_layers.to(device)
         self.start_blend = int(start_blend * num_ddim_steps)
         self.counter = 0
-        self.th = th
+        self.th = th 
 
 
 class EmptyControl:
@@ -126,10 +132,16 @@ class AttentionStore(AttentionControl):
     def get_empty_store():
         return {"down_cross": [], "mid_cross": [], "up_cross": [],
                 "down_self": [], "mid_self": [], "up_self": []}
-    #   使用的是 attend 环境别忘记了
+    # 使用的是attend环境别忘记了
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
         if attn.shape[1] <= 32 ** 2:  # avoid memory overhead
+            if is_cross:
+                if self.ref_attn_dict is not None:
+                    #TODO： 应该怎么使用 self_attention进行 regular? 
+                    item = self.ref_attn_dict[key.replace("cross","self")][attn.shape[1]]
+                    attn = torch.einsum('bjc,bji->bic',attn,item)
+                    #TODO: 还得想一下 是不是写对了 ， 下午debug 一下
             self.step_store[key].append(attn)
         return attn
 
@@ -157,6 +169,12 @@ class AttentionStore(AttentionControl):
         super(AttentionStore, self).__init__()
         self.step_store = self.get_empty_store()
         self.attention_store = {}
+        
+    #NOTE: 添加了set 属性
+    def set_ref_attn_dict(self,ref_attn_dict:Optional[AttentionStore]=None):
+        if ref_attn_dict is not None:
+            self.ref_attn_dict = ref_attn_dict
+        
 
 
 class AttentionControlEdit(AttentionStore, abc.ABC):
@@ -164,7 +182,6 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
     def step_callback(self, x_t):
         if self.local_blend is not None:
             x_t = self.local_blend(x_t, self.attention_store)
-            # 不可能啊 不应该会有这个错误的 
         return x_t
 
     def replace_self_attention(self, attn_base, att_replace, place_in_unet):
@@ -220,6 +237,7 @@ class AttentionReplace(AttentionControlEdit):
                  local_blend: Optional[LocalBlend] = None, tokenizer=None):
         super(AttentionReplace, self).__init__(prompts, num_steps, cross_replace_steps, self_replace_steps, local_blend)
         self.mapper = seq_aligner.get_replacement_mapper(prompts, tokenizer).to(device)
+        # ([1, 77]) 
 
 
 class AttentionRefine(AttentionControlEdit):
@@ -267,9 +285,6 @@ Tuple[float, ...]], tokenizer=None):
         inds = ptp_utils.get_word_inds(text, word, tokenizer)
         equalizer[:, inds] = val
     return equalizer
-
-
-#那么这里就是做一个插入的嘛？ 直接重新计算一下cross attention_map  edit的 batch_size 里面都需要计算 ? 那这个地方还得在想下  
 
 
 def make_controller(pipeline, prompts: List[str], is_replace_controller: bool, cross_replace_steps: Dict[str, float],
