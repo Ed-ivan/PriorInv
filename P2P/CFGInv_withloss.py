@@ -42,9 +42,7 @@ def load_512(image_path, left=0, right=0, top=0, bottom=0):
     return image
 
 
-
-
-class CFGInversion:
+class Inversion:
     def prev_step(self, model_output: Union[torch.FloatTensor, np.ndarray], timestep: int,
                   sample: Union[torch.FloatTensor, np.ndarray]):
         prev_timestep = timestep - self.scheduler.config.num_train_timesteps // self.scheduler.num_inference_steps
@@ -123,53 +121,7 @@ class CFGInversion:
 
     @torch.no_grad()
     def SPD_loop(self, latent):
-        uncond_embeddings, cond_embeddings = self.context.chunk(2)
-        all_latent = [latent]
-        latent = latent.clone().detach()
-        latent_init = latent.clone().detach()
-        for i in range(self.num_ddim_steps):
-            t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
-            noise_pred = self.get_noise_pred_single(latent, t, self.context)
-            # TODO: 那么就是需要修改这个地方了 还得得到这个uncond的  
-            latent_ztm1 = latent.clone().detach()
-            latent = self.next_step(noise_pred, t, latent_ztm1)
-            ################ below code is from  SPDInv optimization steps #################
-
-            # below is modified 
-            prior_mean ,prior_variance = self.posterior_mean_variable(t,latent_init)
-            prior_mean.requires_grad = False
-            prior_variance.requires_grad=False
-            # before is added! 
-            optimal_latent = latent.clone().detach()
-            
-            optimal_latent.requires_grad = True
-            #optimizer = torch.optim.SGD([optimal_latent], lr=self.lr, momentum=0.5, nesterov=True)
-            optimizer = torch.optim.AdamW([optimal_latent], lr=self.lr)
-            for rid in range(self.opt_round):
-                with torch.enable_grad():
-                    
-                    optimizer.zero_grad()
-                    noise_pred = self.get_noise_pred_single(optimal_latent, t, self.context)
-                    # [1,4,64,64]
-                    pred_latent = self.next_step(noise_pred, t, latent_ztm1)
-                    
-                    loss = F.mse_loss(optimal_latent, pred_latent)
-                    
-                    prior_loss = self.prior_lambda * self.log_prob_regulation(optimal_latent,prior_mean,prior_variance)
-                    total_loss = loss+ prior_loss
-                    #print("prior_loss is : ",prior_loss)
-                    total_loss.backward()
-                    optimizer.step()
-
-                    if self.enable_threshold and loss < self.threshold:
-                        break
-            
-            ############### End SPDInv optimization ###################
-
-            latent = optimal_latent.clone().detach()
-            latent.requires_grad = False
-            all_latent.append(latent)
-        return all_latent
+        raise NotImplementedError
 
     @property
     def scheduler(self):
@@ -249,3 +201,175 @@ class CFGInversion:
         self.enable_threshold = enable_threshold
         self.scale = scale
         self.prior_lambda = prior_lambda
+
+
+class CFGInversion(Inversion):
+    @torch.no_grad()
+    def SPD_loop(self, latent):
+        uncond_embeddings, cond_embeddings = self.context.chunk(2)
+        all_latent = [latent]
+        latent = latent.clone().detach()
+        latent_init = latent.clone().detach()
+        for i in range(self.num_ddim_steps):
+            t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
+            noise_pred = self.get_noise_pred_single(latent, t, self.context)
+            # TODO: 那么就是需要修改这个地方了 还得得到这个uncond的  
+            latent_ztm1 = latent.clone().detach()
+            latent = self.next_step(noise_pred, t, latent_ztm1)
+            ################ below code is from  SPDInv optimization steps #################
+
+            # below is modified 
+            prior_mean ,prior_variance = self.posterior_mean_variable(t,latent_init)
+            prior_mean.requires_grad = False
+            prior_variance.requires_grad=False
+            # before is added! 
+            optimal_latent = latent.clone().detach()
+            
+            optimal_latent.requires_grad = True
+            #optimizer = torch.optim.SGD([optimal_latent], lr=self.lr, momentum=0.5, nesterov=True)
+            optimizer = torch.optim.AdamW([optimal_latent], lr=self.lr)
+            for rid in range(self.opt_round):
+                with torch.enable_grad():
+                    
+                    optimizer.zero_grad()
+                    noise_pred = self.get_noise_pred_single(optimal_latent, t, self.context)
+                    # [1,4,64,64]
+                    pred_latent = self.next_step(noise_pred, t, latent_ztm1)
+                    
+                    loss = F.mse_loss(optimal_latent, pred_latent)
+                    
+                    prior_loss = self.prior_lambda * self.log_prob_regulation(optimal_latent,prior_mean,prior_variance)
+                    total_loss = loss+ prior_loss
+                    #print("prior_loss is : ",prior_loss)
+                    total_loss.backward()
+                    optimizer.step()
+
+                    if self.enable_threshold and loss < self.threshold:
+                        break
+            
+            ############### End SPDInv optimization ###################
+
+            latent = optimal_latent.clone().detach()
+            latent.requires_grad = False
+            all_latent.append(latent)
+        return all_latent
+
+    # help function : compute posterior_mean_variable
+    def posterior_mean_variable(self,timestep: int, latent_init: Union[torch.FloatTensor, np.ndarray]):
+        
+        alpha_prod_t = self.scheduler.alphas_cumprod[timestep]
+        # tensor,scalor
+        return  alpha_prod_t**0.5*latent_init ,  1-alpha_prod_t
+
+    def log_prob_regulation(self,latent: Union[torch.FloatTensor, np.ndarray],posterior_mean, posterior_variable):
+        
+        '''
+        得到里面的 p(x_{t}|x_{0})分布,计算得到的x_{t}的概率，但是由于本身 x_t 的维度非常大,所以还不能直接这么写 
+        logq(x_{t}|x_{0}) = sum(log(x_{tj}|x_{oj})) (按照每个都是独立分布进行处理的)
+        '''
+        #log_pz = 0.5 * torch.sum(torch.log(2 * torch.pi * posterior_variable*2)) + torch.sum((latent - posterior_mean)**2 / (2 * posterior_variable**2))
+        #log_pz =  torch.mean((latent - posterior_mean)**2 / (2 * posterior_variable))
+        log_pz =  torch.mean((latent - posterior_mean)**2)
+        return log_pz
+
+    #TODO:  ProxEdit_Improving_Tuning-Free_Real_Image_Editing_With_Proximal_Guidance  this fn is not used !
+    def proximal_constants(self,prox,noise_prediction_text,noise_pred_uncond,quantile): 
+
+        '''
+        主要是为了  限制 使用 CFG_inversion 时候 embeddings_un + scale(embddings_text -embeddings_un) 
+        减少一下 得到的 noise,还需要将其中的函数进行某种程度的操作??
+        '''
+        if prox == 'l1':
+            score_delta = noise_prediction_text - noise_pred_uncond
+            if quantile > 0:
+                threshold = score_delta.abs().quantile(quantile)
+            else:
+                threshold = -quantile  # if quantile is negative, use it as a fixed threshold
+            score_delta -= score_delta.clamp(-threshold, threshold)
+            score_delta = torch.where(score_delta > 0, score_delta-threshold, score_delta)
+            score_delta = torch.where(score_delta < 0, score_delta+threshold, score_delta)
+        pass
+
+    def __init__(self, model, K_round=25, num_ddim_steps=50, learning_rate=0.001, delta_threshold=5e-6,
+                 enable_threshold=True,scale =1.0,prior_lambda=0.00045):
+        super(CFGInversion,self).__init__(model,K_round,num_ddim_steps,learning_rate,delta_threshold,
+        enable_threshold,scale,prior_lambda)
+
+
+class CFGInversionWithRegular(Inversion):
+    @torch.no_grad()
+    def SPD_loop(self, latent):
+        uncond_embeddings, cond_embeddings = self.context.chunk(2)
+        all_latent = [latent]
+        latent = latent.clone().detach()
+        latent_init = latent.clone().detach()
+        for i in range(self.num_ddim_steps):
+            t = self.model.scheduler.timesteps[len(self.model.scheduler.timesteps) - i - 1]
+            noise_pred = self.get_noise_pred_single(latent, t, self.context)
+            # TODO: 那么就是需要修改这个地方了 还得得到这个uncond的  
+            latent_ztm1 = latent.clone().detach()
+            latent = self.next_step(noise_pred, t, latent_ztm1)
+            ################ below code is from  SPDInv optimization steps #################
+
+            # below is modified 
+            prior_mean ,prior_variance = self.posterior_mean_variable(t,latent_init)
+            prior_mean.requires_grad = False
+            prior_variance.requires_grad=False
+            # before is added! 
+            optimal_latent = latent.clone().detach()
+            
+            optimal_latent.requires_grad = True
+            #optimizer = torch.optim.SGD([optimal_latent], lr=self.lr, momentum=0.5, nesterov=True)
+            optimizer = torch.optim.AdamW([optimal_latent], lr=self.lr)
+            for rid in range(self.opt_round):
+                with torch.enable_grad():
+                    
+                    optimizer.zero_grad()
+                    noise_pred = self.get_noise_pred_single(optimal_latent, t, self.context)
+                    # [1,4,64,64]
+                     # regularization of the noise prediction 
+                     # https://github.com/pix2pixzero/pix2pix-zero/blob/main/src/utils/ddim_inv.py
+                    e_t = noise_pred
+                    for _outer in range(self.num_reg_steps):
+                        if self.lambda_ac>0:
+                            for _inner in range(self.num_ac_rolls):
+                                _var = torch.autograd.Variable(e_t.detach().clone(), requires_grad=True)
+                                l_ac = self.auto_corr_loss(_var)
+                                l_ac.backward()
+                                _grad = _var.grad.detach()/self.num_ac_rolls
+                                e_t = e_t - self.lambda_ac*_grad
+                        if self.lambda_kl>0:
+                            _var = torch.autograd.Variable(e_t.detach().clone(), requires_grad=True)
+                            l_kld = self.kl_divergence(_var)
+                            l_kld.backward()
+                            _grad = _var.grad.detach()
+                            e_t = e_t - self.lambda_kl*_grad
+                        e_t = e_t.detach()
+                    noise_pred = e_t
+                    pred_latent = self.next_step(noise_pred, t, latent_ztm1)
+                    loss = F.mse_loss(optimal_latent, pred_latent)
+                    
+                    loss.backward()
+                    optimizer.step()
+
+                    if self.enable_threshold and loss < self.threshold:
+                        break
+            
+            ############### End SPDInv optimization ###################
+
+            latent = optimal_latent.clone().detach()
+            latent.requires_grad = False
+            all_latent.append(latent)
+        return all_latent
+
+    def __init__(self, model, K_round=25, num_ddim_steps=50, learning_rate=0.001, delta_threshold=5e-6,
+                 enable_threshold=True,scale =1.0,prior_lambda=0.00045,
+                 lambda_ac=0.00045,num_ac_rolls=5,lambda_kl=5,num_reg_steps=5):
+        
+        super(CFGInversionWithRegular,self).__init__(model,K_round,num_ddim_steps,learning_rate,delta_threshold,
+        enable_threshold,scale,prior_lambda)
+        self.num_ac_rolls= num_ac_rolls
+        self.lambda_ac= lambda_ac
+        self.lambda_kl = lambda_kl
+        self.num_reg_steps = num_reg_steps
+        

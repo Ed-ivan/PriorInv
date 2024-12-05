@@ -48,8 +48,6 @@ class LocalBlend:
     def __init__(self, prompts: List[str], words: [List[List[str]]], substruct_words=None, start_blend=0.2, th=(.3, .3),
                  tokenizer=None, num_ddim_steps=20):
         alpha_layers = torch.zeros(len(prompts), 1, 1, 1, 1, MAX_NUM_WORDS)
-        breakpoint()
-        mapper = seq_aligner.get_replacement_mapper(prompts, tokenizer).to(device)
         for i, (prompt, words_) in enumerate(zip(prompts, words)):
             if type(words_) is str:
                 words_ = [words_]
@@ -132,16 +130,18 @@ class AttentionStore(AttentionControl):
     def get_empty_store():
         return {"down_cross": [], "mid_cross": [], "up_cross": [],
                 "down_self": [], "mid_self": [], "up_self": []}
-    # 使用的是attend环境别忘记了
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
         if attn.shape[1] <= 32 ** 2:  # avoid memory overhead
             if is_cross:
                 if self.ref_attn_dict is not None:
                     #TODO： 应该怎么使用 self_attention进行 regular? 
-                    item = self.ref_attn_dict[key.replace("cross","self")][attn.shape[1]]
-                    attn = torch.einsum('bjc,bji->bic',attn,item)
-                    #TODO: 还得想一下 是不是写对了 ， 下午debug 一下
+                    breakpoint()
+                    ref_key=key
+                    item = self.ref_attn_dict[ref_key.replace('cross','self')][attn.shape[1]]
+                    assert attn.shape[0] == item.shape[0] ,"ref dim is not same with edit"
+                    attn[:1,...].copy_(torch.einsum('bjc,bji->bic', attn[:1,...], item[:1,...]))
+                    
             self.step_store[key].append(attn)
         return attn
 
@@ -169,9 +169,10 @@ class AttentionStore(AttentionControl):
         super(AttentionStore, self).__init__()
         self.step_store = self.get_empty_store()
         self.attention_store = {}
+        self.ref_attn_dict = None 
         
     #NOTE: 添加了set 属性
-    def set_ref_attn_dict(self,ref_attn_dict:Optional[AttentionStore]=None):
+    def set_ref_attn_dict(self,ref_attn_dict=None):
         if ref_attn_dict is not None:
             self.ref_attn_dict = ref_attn_dict
         
