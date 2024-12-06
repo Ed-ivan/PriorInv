@@ -107,6 +107,7 @@ class AttentionControl(abc.ABC):
             else:
                 h = attn.shape[0]
                 attn[h // 2:] = self.forward(attn[h // 2:], is_cross, place_in_unet)
+                # 通了应该没有问题啊 ,存的就是
         self.cur_att_layer += 1
         if self.cur_att_layer == self.num_att_layers + self.num_uncond_att_layers:
             self.cur_att_layer = 0
@@ -135,13 +136,11 @@ class AttentionStore(AttentionControl):
         if attn.shape[1] <= 32 ** 2:  # avoid memory overhead
             if is_cross:
                 if self.ref_attn_dict is not None:
-                    #TODO： 应该怎么使用 self_attention进行 regular? 
-                    breakpoint()
+                
                     ref_key=key
                     item = self.ref_attn_dict[ref_key.replace('cross','self')][attn.shape[1]]
                     assert attn.shape[0] == item.shape[0] ,"ref dim is not same with edit"
-                    attn[:1,...].copy_(torch.einsum('bjc,bji->bic', attn[:1,...], item[:1,...]))
-                    
+                    #attn[:attn.shape[0]//2,...].copy_(torch.einsum('bjc,bji->bic', attn[:attn.shape[0]//2,...], item[:attn.shape[0]//2,...])
             self.step_store[key].append(attn)
         return attn
 

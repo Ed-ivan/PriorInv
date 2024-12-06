@@ -119,8 +119,6 @@ def diffusion_step(model, controller, latents, context, t, guidance_scale, low_r
         # noise_prediction_text[1] =  projedit
         pass
         
-        
-    
     if inference_stage and prox is not None:
         if prox == 'l1':
             score_delta = noise_prediction_text - noise_pred_uncond

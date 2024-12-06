@@ -15,10 +15,10 @@ import torch.nn.functional as F
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 from utils.control_utils import load_512, make_controller
-#from P2P.SPDInv import SourcePromptDisentanglementInversion
-from P2P.CFGInv import CFGInversion
+from P2P.SPDInv import SourcePromptDisentanglementInversion
 
-# %%c
+
+
 
 @torch.no_grad()
 def editing_p2p(
@@ -41,7 +41,7 @@ def editing_p2p(
     height = width = 512
 
     text_input = model.tokenizer(
-        prompt,
+        prompt, 
         padding="max_length",
         max_length=model.tokenizer.model_max_length,
         truncation=True,
@@ -72,14 +72,13 @@ def editing_p2p(
                                                inference_stage=inference_stage, x_stars=x_stars, i=i, **kwargs)
     if return_type == 'image':
         image = ptp_utils.latent2image(model.vae, latents)
-        
     else:
         image = latents
     return image, latent
 
 
 @torch.no_grad()
-def P2P_inversion_and_edit(
+def Inversion_and_show_attention_map(
         image_path,
         prompt_src,
         prompt_tar,
@@ -108,7 +107,7 @@ def P2P_inversion_and_edit(
     ldm_stable = StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", scheduler=scheduler).to(
         device)
     
-    SPD_inversion = CFGInversion(ldm_stable, K_round=K_round, num_ddim_steps=num_of_ddim_steps,
+    SPD_inversion = SourcePromptDisentanglementInversion(ldm_stable, K_round=K_round, num_ddim_steps=num_of_ddim_steps,
                                                          learning_rate=learning_rate, delta_threshold=delta_threshold,
                                                          enable_threshold=enable_threshold)
     (image_gt, image_enc, image_enc_latent), x_stars, uncond_embeddings = SPD_inversion.invert(
@@ -132,17 +131,29 @@ def P2P_inversion_and_edit(
         eq_params = {"words": (s1,), "values": (float(s2),)}  # amplify attention to the word "tiger" by *2
     controller = make_controller(ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
                                  blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
+    
+    #TODO：我想写的是计算 得到的 z_latent 跟 src 之间的 attent_map ，里面的代码应该怎么修改?  应该不要求平均了啊 
+    #应该怎么衡量跟 noise 之间的距离？  所以我在里面应该算的是 p(x) ，如果概率大，说明 更加的趋于noise ,自然编辑性就好 ？ 
+    # 那么问题来了  使用的 scale 强度是不是 跟edit的一致？ 总之不能太大 。 
+
+    # https://github.com/openai/improved-diffusion
 
 
 
-    images, _ = editing_p2p(ldm_stable, prompts, controller, latent=z_inverted_noise_code,
-                            num_inference_steps=num_of_ddim_steps,
-                            guidance_scale=guidance_scale,
-                            uncond_embeddings=uncond_embeddings,
-                            inversion_guidance=use_inversion_guidance, x_stars=x_stars, )
+@torch.no_grad()
+def log_likelihood(x:torch):
+    assert(len(x.shape)>=3,"x size is  not right")
+    mu = torch.zeros(x.shape) 
+    centered_x = x - mu
+    quadratic_term = (centered_x ** 2).sum(dim=(-1,-2,-3))  
 
-    filename = image_path.split('/')[-1].replace(".jpg",".png")
-    Image.fromarray(np.concatenate(images, axis=1)).save(f"{output_dir}/{sample_count}_P2P_{filename}")
+    exp_term = torch.exp(-0.5 * quadratic_term)
+    return exp_term
+
+
+
+
+
 
 
 
@@ -243,4 +254,5 @@ if __name__ == "__main__":
     params['prompt_tar'] = args.target
     params['output_dir'] = args.output
     params['image_path'] = args.input
-    P2P_inversion_and_edit(**params)
+    Inversion_and_show_attention_map(**params)
+

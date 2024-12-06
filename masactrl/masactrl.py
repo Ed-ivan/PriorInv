@@ -41,7 +41,7 @@ class MutualSelfAttentionControl(AttentionBase):
 
         sim = torch.einsum("h i d, h j d -> h i j", q, k) * kwargs.get("scale")
         attn = sim.softmax(-1)
-        out = torch.einsum("h i j, h j d -> h i d", attn, v)
+        out = torch.einsum("h i j, h j d -> h i d", attn, v) 
         out = rearrange(out, "h (b n) d -> b n (h d)", b=b)
         return out
 
