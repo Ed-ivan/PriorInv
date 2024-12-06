@@ -153,3 +153,65 @@ def txt_draw(text,
     plt.close('all')
     
     return image
+
+
+
+
+
+
+
+#NOTE: this function is not used!
+def regulize_cross_attention(attn_dict):
+    '''
+        down_cross dim  [16, 1024, 77]
+        down_cross dim [16,256,77]
+        mid_cross dim [16,64,77]
+        up_cross dim [16,256,77]
+        up_cross dim [16,1024,77]
+        down_self dim [16,1024 , 1024]
+        down_self dim [16,256,256]
+        mid_self dim [16 ,64,64]
+        up_self dim[16 , 256,256]
+        up_self dim [16 , 1024 , 1024]
+    '''
+    reguliazed_cross_attn_dict={}
+    self_list = ["down_self","up_self","mid_self"]
+    for key in attn_dict:
+        if key in self_list:
+            continue
+        reguliazed_cross_attn_dict[key]={}
+        for item in attn_dict[key]:
+            shape = item.shape[1]
+            if shape not in reguliazed_cross_attn_dict[key]:
+                reguliazed_cross_attn_dict[key][shape] = []
+            self_attn = attn_dict[key.replace("cross","self")][shape] 
+            reguliazed_cross_attn_dict[key][shape].append(torch.einsum('bjc,bji->bic',self_attn,attn_dict[key][shape]))
+            # 考虑其他位置的cross-attention-map
+    return reguliazed_cross_attn_dict
+
+
+
+#NOTE: this function is not used!
+def generate_mask(attn_dict, idx: int, res=64):
+    mask = None
+    for key in attn_dict:
+        for item in attn_dict[key]:
+            shape = item.shape[1]
+            
+            chunked_item = item.chunk(2, dim=0)[0]
+            
+            chunked_item = chunked_item.view(8, -1, shape, 77)
+            
+            averaged_item = chunked_item.mean(dim=0)
+            
+            # 将结果调整为 res x res 的维度
+            resized_item = F.interpolate(averaged_item.unsqueeze(0), size=(res, res), mode='bilinear').squeeze(0)
+            if mask is None:
+                mask = resized_item
+            else:
+                mask += resized_item
+    
+    mask /= len(attn_dict)
+    
+    return mask[:,:,idx]
+

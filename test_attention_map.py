@@ -69,124 +69,6 @@ def visualize_pca_results(con_image_pca, ucon_image_pca, delta_image_pca, t, out
 
 @torch.no_grad()
 def save_noise(noise_pred_con, noise_pred_ucon, t, output_dir='output_noise'):
-    pass
-    '''
-    这个正则的代码应该怎么写呢？ 
-    先走一遍 存储里面的self-attention代码 
-    所以对于prompts 是 [a photo of cat # a photo of dog]? 
-
-    '''
-
-
-
-class SelfAttentionStore(AttentionStore):
-    @staticmethod
-    def get_empty_store():
-        return {"down_self": [], "mid_self": [], "up_self": []}
-    #   使用的是 attend 环境别忘记了
-    
-    def forward(self, attn, is_cross: bool, place_in_unet: str):
-        key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
-        if attn.shape[1] <= 32 ** 2:  # avoid memory overhead
-            if not is_cross:
-                self.step_store[key].append(attn)
-        return attn
-
-    def __init__(self):
-        super(SelfAttentionStore, self).__init__()
-        
-
-def avg_attention_map(attn_dict):
-    attn_size={}
-    for key in attn_dict:
-        attn_size[key]={}
-        for item in attn_dict[key]:
-            shape = item.shape[1]
-            if shape not in attn_size[key]:
-                attn_size[key][shape] = []
-            attn_size[key][shape].append(item)    
-    averaged_attn = {}
-    for key in attn_size:
-        averaged_attn[key] = {}
-        for shape in attn_size[key]:
-            attn_group = torch.stack(attn_size[key][shape], dim=0)
-            averaged_attn[key][shape] = attn_group.mean(dim=0)
-    return averaged_attn
-
-
-
-def restore_self_attn(model,
-        prompt: List[str],
-        num_inference_steps: int = 50,
-        guidance_scale: Optional[float] = 7.5,
-        generator: Optional[torch.Generator] = None,
-        latent: Optional[torch.FloatTensor] = None,
-        uncond_embeddings=None,
-        return_type='image',
-        inference_stage=True,
-        x_stars=None,
-        noise_save_dir=None,
-        inversion_guidance=None,
-        **kwargs,
-):
-    # 1、first loop to get self_attention 
-    prompt_src =prompt[0]
-    self_controller  = SelfAttentionStore()
-    
-    # make  self attention save controller 
-    editing_p2p(model,prompt,self_controller, latent=latent,
-                            num_inference_steps=num_inference_steps,
-                            guidance_scale=guidance_scale,
-                            uncond_embeddings=uncond_embeddings,
-                            inversion_guidance=inversion_guidance, x_stars=x_stars)
-    # 想一哈 里面的 [src, tar] , [uncon,uncon]
-    return self_controller
-
-
-#NOTE： out -of -memory
-def editing_p2p_with_regular(
-        model,
-        prompt: List[str],
-        controller,
-        num_inference_steps: int = 50,
-        guidance_scale: Optional[float] = 7.5,
-        generator: Optional[torch.Generator] = None,
-        latent: Optional[torch.FloatTensor] = None,
-        uncond_embeddings=None,
-        return_type='image',
-        inference_stage=True,
-        x_stars=None,
-        noise_save_dir=None,
-        inversion_guidance=None,
-        **kwargs,):
-    #TODO：里面代码写的有点问题
-    ref_controller = restore_self_attn(model, prompt[0], latent=latent,
-                            num_inference_steps=num_inference_steps,
-                            guidance_scale=guidance_scale,
-                            uncond_embeddings=uncond_embeddings,
-                            inversion_guidance=inversion_guidance, x_stars=x_stars)
-    attn_dict = ref_controller.get_average_attention()
-    avg_self_attn_dict = avg_attention_map(attn_dict)
-    filename = image_path.split('/')[-1].replace(".jpg",".png")
-
-    controller.set_ref_attn_dict(avg_self_attn_dict)
-
-    images, _ = editing_p2p(model,prompts, controller, latent=latent,
-                            num_inference_steps=num_inference_steps,
-                            guidance_scale=guidance_scale,
-                            uncond_embeddings=uncond_embeddings,
-                            inversion_guidance=inversion_guidance, x_stars=x_stars, noise_save_dir=noise_save_dir)
-    #形式就是 ： 
-    # down_self dim [16,1024 , 1024]
-    # down_self dim [16,256,256]
-    # mid_self dim [16 ,64,64]
-    # up_self dim[16 , 256,256]
-    # up_self dim [16 , 1024 , 1024]
-
-    
-    
-
-
 
     assert output_dir is not None, "noise_save_dir can not be empty"
     os.makedirs(output_dir, exist_ok=True)
@@ -224,10 +106,53 @@ def editing_p2p_with_regular(
     Image.fromarray(con_image_pca).save(f"{output_dir}/noise_pred_con_pca_{t}.png")
     Image.fromarray(ucon_image_pca).save(f"{output_dir}/noise_pred_ucon_pca_{t}.png")
     Image.fromarray(delta_image_pca).save(f"{output_dir}/noise_delta_pca_{t}.png")
+    
+    
+    
+    pass
+    '''
+    这个正则的代码应该怎么写呢？ 
+    先走一遍 存储里面的self-attention代码 
+    所以对于prompts 是 [a photo of cat # a photo of dog]? 
+
+    '''
 
 
 
+class SelfAttentionStore(AttentionStore):
+    @staticmethod
+    def get_empty_store():
+        return {"down_self": [], "mid_self": [], "up_self": []}
+    #   使用的是 attend 环境别忘记了
+    
+    def forward(self, attn, is_cross: bool, place_in_unet: str):
+        key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
+        if attn.shape[1] <= 32 ** 2:  # avoid memory overhead
+            if not is_cross:
+                self.step_store[key].append(attn)
+        return attn
 
+    def avg_attention_map(self):
+        attn_size={}
+        for key in self.attention_store:
+            attn_size[key]={}
+            for item in self.attention_store[key]:
+                shape = item.shape[1]
+                if shape not in attn_size[key]:
+                    attn_size[key][shape] = []
+                attn_size[key][shape].append(item)    
+        averaged_attn = {}
+        for key in attn_size:
+            averaged_attn[key] = {}
+            for shape in attn_size[key]:
+                attn_group = torch.stack(attn_size[key][shape], dim=0)
+                averaged_attn[key][shape] = attn_group.mean(dim=0)
+        return averaged_attn
+
+
+    def __init__(self):
+        super(SelfAttentionStore, self).__init__()
+        
 
 def editing_p2p_with_regular_new(
         model,
@@ -317,6 +242,14 @@ def editing_p2p_with_regular_new(
             latents = ptp_utils.diffusion_step(model, controller, latents, context, t, guidance_scale,
                                                low_resource=False,
                                                inference_stage=inference_stage, x_stars=x_stars,i=i, capture_noise=None,**kwargs)
+
+    if return_type == 'image':
+        image = ptp_utils.latent2image(model.vae, latents)
+        
+    else:
+        image = latents
+        
+    return image, latent                                         
 
 @torch.no_grad()
 def editing_p2p(
@@ -454,6 +387,9 @@ def show_attention_map(
                             uncond_embeddings=uncond_embeddings,
                             inversion_guidance=use_inversion_guidance, x_stars=x_stars, noise_save_dir=noise_save_dir)
 
+    Image.fromarray(np.concatenate(images, axis=1)).save(f"{output_dir}/{sample_count}_P2P_{filename}")
+
+
     
     #save_attention_map(ldm_stable.tokenizer, controller, res=16,prompts=prompts,from_where=["up", "down"],filename=f"{output_dir}"+"attention_map")
     # attn = controller.get_average_attention()
@@ -546,7 +482,7 @@ def parse_args():
     parser.add_argument(
         "--guidance_scale",
         type=float,
-        default=0.8,
+        default=7.5,
     )
     parser.add_argument(
         "--output",
@@ -637,60 +573,3 @@ if __name__ == "__main__":
 # mid_self dim [16 ,64,64]
 # up_self dim[16 , 256,256]
 # up_self dim [16 , 1024 , 1024]
-
-
-#NOTE: this function is not used!
-def regulize_cross_attention(attn_dict):
-    '''
-        down_cross dim  [16, 1024, 77]
-        down_cross dim [16,256,77]
-        mid_cross dim [16,64,77]
-        up_cross dim [16,256,77]
-        up_cross dim [16,1024,77]
-        down_self dim [16,1024 , 1024]
-        down_self dim [16,256,256]
-        mid_self dim [16 ,64,64]
-        up_self dim[16 , 256,256]
-        up_self dim [16 , 1024 , 1024]
-    '''
-    reguliazed_cross_attn_dict={}
-    self_list = ["down_self","up_self","mid_self"]
-    for key in attn_dict:
-        if key in self_list:
-            continue
-        reguliazed_cross_attn_dict[key]={}
-        for item in attn_dict[key]:
-            shape = item.shape[1]
-            if shape not in reguliazed_cross_attn_dict[key]:
-                reguliazed_cross_attn_dict[key][shape] = []
-            self_attn = attn_dict[key.replace("cross","self")][shape] 
-            reguliazed_cross_attn_dict[key][shape].append(torch.einsum('bjc,bji->bic',self_attn,attn_dict[key][shape]))
-            # 考虑其他位置的cross-attention-map
-    return reguliazed_cross_attn_dict
-
-
-
-#NOTE: this function is not used!
-def generate_mask(attn_dict, idx: int, res=64):
-    mask = None
-    for key in attn_dict:
-        for item in attn_dict[key]:
-            shape = item.shape[1]
-            
-            chunked_item = item.chunk(2, dim=0)[0]
-            
-            chunked_item = chunked_item.view(8, -1, shape, 77)
-            
-            averaged_item = chunked_item.mean(dim=0)
-            
-            # 将结果调整为 res x res 的维度
-            resized_item = F.interpolate(averaged_item.unsqueeze(0), size=(res, res), mode='bilinear').squeeze(0)
-            if mask is None:
-                mask = resized_item
-            else:
-                mask += resized_item
-    
-    mask /= len(attn_dict)
-    
-    return mask[:,:,idx]
-
