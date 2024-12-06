@@ -1,3 +1,4 @@
+# 实现 spn的 inversion 
 from typing import Optional, Union, List
 from tqdm import tqdm
 import torch
@@ -9,22 +10,20 @@ from PIL import Image
 import os
 from P2P.scheduler_dev import DDIMSchedulerDev
 import argparse
-from utils.control_utils import AttentionStore
-from utils.control_utils import aggregate_attention
+
 import torch.nn.functional as F
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 from utils.control_utils import load_512, make_controller
-#from P2P.SPDInv import SourcePromptDisentanglementInversion
-from P2P.CFGInv import CFGInversion
+# from P2P.SPDInv import SourcePromptDisentanglementInversion
+from P2P.CFGInv_withloss import CFGInversion
 
-# %%c
+# this file is to run rescontruction results 
 
 @torch.no_grad()
-def editing_p2p(
+def recontruction(
         model,
         prompt: List[str],
-        controller,
         num_inference_steps: int = 50,
         guidance_scale: Optional[float] = 7.5,
         generator: Optional[torch.Generator] = None,
@@ -36,7 +35,7 @@ def editing_p2p(
         **kwargs,
 ):
     batch_size = len(prompt)
-    ptp_utils.register_attention_control(model, controller)
+    # ptp_utils.register_attention_control(model, controller)
     # 应该是在 进行了注册 
     height = width = 512
 
@@ -48,7 +47,7 @@ def editing_p2p(
         return_tensors="pt",
     )
     text_embeddings = model.text_encoder(text_input.input_ids.to(model.device))[0]
-    # [2,77.768] 
+    # [2,77,768] 
     max_length = text_input.input_ids.shape[-1]
     if uncond_embeddings is None:
         uncond_input = model.tokenizer(
@@ -61,30 +60,32 @@ def editing_p2p(
     latent, latents = ptp_utils.init_latent(latent, model, height, width, generator, batch_size)
     start_time = num_inference_steps
     model.scheduler.set_timesteps(num_inference_steps)
+    controller=None
     with torch.no_grad():
         for i, t in enumerate(tqdm(model.scheduler.timesteps[-start_time:], total=num_inference_steps)):
             if uncond_embeddings_ is None:
                 context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
             else:
                 context = torch.cat([uncond_embeddings_, text_embeddings])
-            latents = ptp_utils.diffusion_step(model, controller, latents, context, t, guidance_scale,
+            # 倒是不如直接 传入一些latents 
+            latents = ptp_utils.diffusion_step(model,controller,latents, context, t, guidance_scale,
                                                low_resource=False,
-                                               inference_stage=inference_stage, x_stars=x_stars, i=i, **kwargs)
+                                               inference_stage=inference_stage, x_stars=x_stars,prox=None, i=i, **kwargs)
     if return_type == 'image':
         image = ptp_utils.latent2image(model.vae, latents)
-        
     else:
         image = latents
     return image, latent
 
 
+
 @torch.no_grad()
-def P2P_inversion_and_edit(
+def P2P_inversion_and_recontruction(
         image_path,
         prompt_src,
         prompt_tar,
         output_dir='output',
-        guidance_scale=7.5,
+        guidance_scale=5.0,
         npi_interp=0,
         cross_replace_steps=0.8,
         self_replace_steps=0.6,
@@ -115,6 +116,8 @@ def P2P_inversion_and_edit(
         image_path, prompt_src, offsets=offsets, npi_interp=npi_interp, verbose=True)
 
     z_inverted_noise_code = x_stars[-1]
+
+    # 如果是修改的话应该从下面入手， 
     
     del SPD_inversion
 
@@ -122,21 +125,11 @@ def P2P_inversion_and_edit(
 
     ########## edit ##########
     prompts = [prompt_src, prompt_tar]
-    cross_replace_steps = {'default_': cross_replace_steps, }
-    if isinstance(blend_word, str):
-        s1, s2 = blend_word.split(",")
-        blend_word = (((s1,), (
-            s2,)))  # for local edit. If it is not local yet - use only the source object: blend_word = ((('cat',), ("cat",))).
-    if isinstance(eq_params, str):
-        s1, s2 = eq_params.split(",")
-        eq_params = {"words": (s1,), "values": (float(s2),)}  # amplify attention to the word "tiger" by *2
-    controller = make_controller(ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
-                                 blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
 
-
-
-    images, _ = editing_p2p(ldm_stable, prompts, controller, latent=z_inverted_noise_code,
+    images, _ = recontruction(ldm_stable, prompts,latent=z_inverted_noise_code,
                             num_inference_steps=num_of_ddim_steps,
+                            #TODO:记得修改一下 
+                            #guidance_scale=1,
                             guidance_scale=guidance_scale,
                             uncond_embeddings=uncond_embeddings,
                             inversion_guidance=use_inversion_guidance, x_stars=x_stars, )
@@ -144,44 +137,46 @@ def P2P_inversion_and_edit(
     filename = image_path.split('/')[-1].replace(".jpg",".png")
     Image.fromarray(np.concatenate(images, axis=1)).save(f"{output_dir}/{sample_count}_P2P_{filename}")
 
-
-
-
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Input your image and editing prompt.")
     parser.add_argument(
         "--input",
         type=str,
         default="images/000000000001.jpg",
+        # /home/user/jin/SPDInv/images/gnochi_mirror.jpeg
+        # images/000000000008.jpg
         # required=True,
         help="Image path",
     )
-    parser.add_argument( 
+    parser.add_argument(
         "--source",
         type=str,
         default="a round cake with orange frosting on a wooden plate",
         # required=True,
+        # a round cake with orange frosting on a wooden plate A cat sitting next to a mirror
+        # a Golden Retriever standing on the groud
         help="Source prompt",
     )
     parser.add_argument(
         "--target",
         type=str,
-        default="a square cake with orange frosting on a wooden plate",
+        default= "a square cake with orange frosting on a wooden plate",
+        #"a Golden Retriever",
+        # a silver cat  sculpture standing on the groud
         # required=True,
+        # a square cake with orange frosting on a wooden plate
         help="Target prompt",
     )
     parser.add_argument(
         "--blended_word",
         type=str,
-        default="cake cake",
+        default="dog cat",
         help="Blended word needed for P2P",
     )
     parser.add_argument(
         "--K_round",
         type=int,
-        default=20,
+        default=25,
         help="Optimization Round",
     )
     parser.add_argument(
@@ -215,16 +210,18 @@ def parse_args():
     parser.add_argument(
         "--guidance_scale",
         type=float,
-        default=7.5,
+        default=1.0,
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="output_test_regular_1205",
+        default="output_res",
         help="Save editing results",
     )
     args = parser.parse_args()
     return args
+
+# 里面的具体编辑还得看下人家 direactinversion 的  
 
 
 if __name__ == "__main__":
@@ -243,4 +240,9 @@ if __name__ == "__main__":
     params['prompt_tar'] = args.target
     params['output_dir'] = args.output
     params['image_path'] = args.input
-    P2P_inversion_and_edit(**params)
+    P2P_inversion_and_recontruction(**params)
+
+
+
+
+

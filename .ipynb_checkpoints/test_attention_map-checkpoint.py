@@ -3,8 +3,8 @@ from tqdm import tqdm
 import torch
 from diffusers import StableDiffusionPipeline
 import numpy as np
-from P2P import ptp_utils
 
+from P2P import ptp_utils
 from PIL import Image
 import os
 from P2P.scheduler_dev import DDIMSchedulerDev
@@ -14,16 +14,63 @@ from torchvision import transforms
 import torch.nn.functional as F
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-from utils.control_utils import load_512, make_controller,save_attention_map,AttentionStore
+from utils.control_utils import load_512, make_controller,save_attention_map
 # from P2P.SPDInv import SourcePromptDisentanglementInversion
 from P2P.CFGInv_withloss import CFGInversion
 from sklearn.decomposition import PCA
+from ptp_utils import AttentionStore
 
 
 
+'''
+这个正则的代码应该怎么写呢？ 
+先走一遍 存储里面的self-attention代码 
+所以对于prompts 是 [a photo of cat # a photo of dog]? 
+
+'''
 
 
-# 可视化
+
+class SelfAttentionStore(AttentionStore):
+    @staticmethod
+    def get_empty_store():
+        return {"down_self": [], "mid_self": [], "up_self": []}
+    #   使用的是 attend 环境别忘记了
+
+
+def restore_self_attn(model,
+        prompt: List[str],
+        controller,
+        num_inference_steps: int = 50,
+        guidance_scale: Optional[float] = 7.5,
+        generator: Optional[torch.Generator] = None,
+        latent: Optional[torch.FloatTensor] = None,
+        uncond_embeddings=None,
+        return_type='image',
+        inference_stage=True,
+        x_stars=None,
+        noise_save_dir=None,
+        **kwargs,
+):
+    # 1、first loop to get self_attention 
+    prompt =prompt[0]
+    self_controller  = SelfAttentionStore()
+    # make  self attention save controller 
+    editing_p2p(prompt,self_controller,num_inference_steps,guidance_scale,generator,latent,uncond_embeddings,return_type,
+    inference_stage,x_stars)
+    # 想一哈 里面的 [src, tar] , [uncon,uncon]
+    return self_controller
+
+
+def regular_cross_attention(controller:AttentionStore):
+    attn_dict  = controller.get_average_attention()
+    # 不对啊，我记得些； 
+    avg_self_attn_dict=avg_attention_map(attn_dict)
+   
+    pass 
+
+
+
 def visualize_and_save_features_pca(feats_map, t, save_dir, layer_idx):
     B = len(feats_map)
     feats_map = feats_map.flatten(0, -2)
@@ -41,6 +88,7 @@ def visualize_and_save_features_pca(feats_map, t, save_dir, layer_idx):
         pca_img = (pca_img - pca_img_min) / (pca_img_max - pca_img_min)
         pca_img = Image.fromarray((pca_img * 255).astype(np.uint8))
         pca_img.save(os.path.join(save_dir, f"{i}_time_{t}_layer_{layer_idx}.png"))
+
 
 # from github masactrl issues pca feature maps 
 def visualize_pca_results(con_image_pca, ucon_image_pca, delta_image_pca, t, output_dir, n_components):
@@ -65,6 +113,8 @@ def visualize_pca_results(con_image_pca, ucon_image_pca, delta_image_pca, t, out
 
     plt.savefig(f"{output_dir}/pca_heatmap_{t}.png")
     plt.close()
+
+
 
 
 @torch.no_grad()
@@ -105,151 +155,6 @@ def save_noise(noise_pred_con, noise_pred_ucon, t, output_dir='output_noise'):
     Image.fromarray(con_image_pca).save(f"{output_dir}/noise_pred_con_pca_{t}.png")
     Image.fromarray(ucon_image_pca).save(f"{output_dir}/noise_pred_ucon_pca_{t}.png")
     Image.fromarray(delta_image_pca).save(f"{output_dir}/noise_delta_pca_{t}.png")
-    '''
-    这个正则的代码应该怎么写呢？ 
-    先走一遍 存储里面的self-attention代码 
-    所以对于prompts 是 [a photo of cat # a photo of dog]? 
-
-    '''
-
-
-
-class SelfAttentionStore(AttentionStore):
-    @staticmethod
-    def get_empty_store():
-        return {"down_self": [], "mid_self": [], "up_self": []}
-    #   使用的是 attend 环境别忘记了
-    
-    def forward(self, attn, is_cross: bool, place_in_unet: str):
-        key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
-        if attn.shape[1] <= 32 ** 2:  # avoid memory overhead
-            if not is_cross:
-                self.step_store[key].append(attn)
-        return attn
-
-    def __init__(self):
-        super(SelfAttentionStore, self).__init__()
-        
-
-def avg_attention_map(attn_dict):
-    attn_size={}
-    for key in attn_dict:
-        attn_size[key]={}
-        for item in attn_dict[key]:
-            shape = item.shape[1]
-            if shape not in attn_size[key]:
-                attn_size[key][shape] = []
-            attn_size[key][shape].append(item)    
-    averaged_attn = {}
-    for key in attn_size:
-        averaged_attn[key] = {}
-        for shape in attn_size[key]:
-            attn_group = torch.stack(attn_size[key][shape], dim=0)
-            averaged_attn[key][shape] = attn_group.mean(dim=0)
-    return averaged_attn
-
-
-    # images, _ = editing_p2p_with_regular_new(ldm_stable, prompts, controller, latent=z_inverted_noise_code,
-    #                         num_inference_steps=num_of_ddim_steps,
-    #                         guidance_scale=guidance_scale,
-    #                         uncond_embeddings=uncond_embeddings,
-    #                         inversion_guidance=use_inversion_guidance, x_stars=x_stars, noise_save_dir=noise_save_dir)
-
-def editing_p2p_with_regular_new(
-        model,
-        prompt: List[str],
-        controller,
-        num_inference_steps: int = 50,
-        guidance_scale: Optional[float] = 7.5,
-        generator: Optional[torch.Generator] = None,
-        latent: Optional[torch.FloatTensor] = None,
-        uncond_embeddings=None,
-        return_type='image',
-        inference_stage=True,
-        x_stars=None,
-        noise_save_dir=None,
-        inversion_guidance=None,
-        **kwargs,):
-    #TODO：里面代码写的有点问题
-    prompt_src =prompt[0]
-    prompt_src = [prompt_src,prompt_src]
-    ref_controller  = SelfAttentionStore()
-    batch_size = len(prompt)
-    print(type(controller))
-    start_time = num_inference_steps
-    
-    # 应该是在 进行了注册 
-    height = width = 512
-    latent_org = latent
-    model.scheduler.set_timesteps(num_inference_steps)
-    if uncond_embeddings is None:
-        uncond_input = model.tokenizer(
-            [""] * batch_size, padding="max_length", max_length=max_length, return_tensors="pt"
-        )
-        uncond_embeddings_ = model.text_encoder(uncond_input.input_ids.to(model.device))[0]
-    else:
-        uncond_embeddings_ = None
-
-    # text_input_src = model.tokenizer(
-    #     prompt_src,
-    #     padding="max_length",
-    #     max_length=model.tokenizer.model_max_length,
-    #     truncation=True,
-    #     return_tensors="pt",
-    # )
-    # text_embeddings = model.text_encoder(text_input_src.input_ids.to(model.device))[0]
-    # # [2,77.768] 
-    # max_length = text_input_src.input_ids.shape[-1]
-    # ptp_utils.register_attention_control(model, ref_controller)
-    # latent, latents = ptp_utils.init_latent(latent, model, height, width, generator, batch_size)
-    # 
-    
-    
-    # with torch.no_grad():
-    #     for i, t in enumerate(tqdm(model.scheduler.timesteps[-start_time:], total=num_inference_steps)):
-    #         if uncond_embeddings_ is None:
-    #             context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
-    #         else:
-    #             context = torch.cat([uncond_embeddings_, text_embeddings])
-    #         # TODO：应该在里面 重新写一下吧 ？  
-    #         latents = ptp_utils.diffusion_step(model, ref_controller, latents, context, t, guidance_scale,
-    #                                            low_resource=False,
-    #                                            inference_stage=inference_stage, x_stars=x_stars,i=i, capture_noise=None,**kwargs)
-    # #second loop for edit
-    # attn_dict = ref_controller.get_average_attention()
-    # avg_self_attn_dict = avg_attention_map(attn_dict)
-    # controller.set_ref_attn_dict(avg_self_attn_dict)
-    ptp_utils.register_attention_control(model, controller)
-    latent, latents = ptp_utils.init_latent(latent_org, model, height, width, generator, batch_size)
-    text_input = model.tokenizer(
-        prompt,
-        padding="max_length",
-        max_length=model.tokenizer.model_max_length,
-        truncation=True,
-        return_tensors="pt",
-    )
-    text_embeddings = model.text_encoder(text_input.input_ids.to(model.device))[0]
-    # [2,77.768] 
-    max_length = text_input.input_ids.shape[-1]
-
-    with torch.no_grad():
-        for i, t in enumerate(tqdm(model.scheduler.timesteps[-start_time:], total=num_inference_steps)):
-            if uncond_embeddings_ is None:
-                context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
-            else:
-                context = torch.cat([uncond_embeddings_, text_embeddings])
-            # TODO：应该在里面 重新写一下吧 ？
-            latents = ptp_utils.diffusion_step(model, controller, latents, context, t, guidance_scale,
-                                               low_resource=False,
-                                               inference_stage=inference_stage, x_stars=x_stars,i=i, capture_noise=None,**kwargs)
-    
-    if return_type == 'image':
-        image = ptp_utils.latent2image(model.vae, latents)
-        
-    else:
-        image = latents
-        
-    return image, latent
 
 
 @torch.no_grad()
@@ -301,6 +206,7 @@ def editing_p2p(
     noise_ucon_list =[]
     noise_con_list =[]
     # callback func for  save noise_delta 
+    assert noise_save_dir is not None ,"noise_save_dir can not be empty"
     @torch.no_grad()
     def capture_noise_test(noise_pred_con,noise_pred_ucon,t):
         save_noise(noise_pred_con,noise_pred_ucon,t,noise_save_dir)
@@ -317,7 +223,7 @@ def editing_p2p(
             # TODO：应该在里面 重新写一下吧 ？  
             latents = ptp_utils.diffusion_step(model, controller, latents, context, t, guidance_scale,
                                                low_resource=False,
-                                               inference_stage=inference_stage, x_stars=x_stars,i=i, capture_noise=None,**kwargs)
+                                               inference_stage=inference_stage, x_stars=x_stars,i=i, capture_noise=capture_noise_test,**kwargs)
     if return_type == 'image':
         image = ptp_utils.latent2image(model.vae, latents)
         
@@ -381,17 +287,12 @@ def show_attention_map(
     controller = make_controller(ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
                                  blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
     filename = image_path.split('/')[-1].replace(".jpg",".png")
-    breakpoint()
 
     images, _ = editing_p2p(ldm_stable, prompts, controller, latent=z_inverted_noise_code,
                             num_inference_steps=num_of_ddim_steps,
                             guidance_scale=guidance_scale,
                             uncond_embeddings=uncond_embeddings,
                             inversion_guidance=use_inversion_guidance, x_stars=x_stars, noise_save_dir=noise_save_dir)
-
-    Image.fromarray(np.concatenate(images, axis=1)).save(f"{output_dir}/{sample_count}_P2P_{filename}")
-
-    #TODO: 这里还有bug 
 
     
     #save_attention_map(ldm_stable.tokenizer, controller, res=16,prompts=prompts,from_where=["up", "down"],filename=f"{output_dir}"+"attention_map")
@@ -408,6 +309,22 @@ def show_attention_map(
 
 
 
+def avg_attention_map(attn_dict):
+    attn_size={}
+    for key in attn_dict:
+        attn_size[key]={}
+        for item in attn_dict[key]:
+            shape = item.shape[1]
+            if shape not in attn_size[key]:
+                attn_size[key][shape] = []
+            attn_size[key][shape].append(item)    
+    averaged_attn = {}
+    for key in attn_size:
+        averaged_attn[key] = {}
+        for shape in attn_size[key]:
+            attn_group = torch.stack(attn_size[key][shape], dim=0)
+            averaged_attn[key][shape] = attn_group.mean(dim=0)
+    return average_attention
 
     
 
@@ -416,7 +333,7 @@ def parse_args():
     parser.add_argument(
         "--input",
         type=str,
-        default="images/000000000009.jpg", 
+        default="images/000000000001.jpg",
         # /home/user/jin/SPDInv/images/gnochi_mirror.jpeg
         # images/000000000008.jpg
         # images/000000000138.jpg
@@ -426,7 +343,7 @@ def parse_args():
     parser.add_argument(
         "--source",
         type=str,
-        default="a bird on the tree",
+        default="a round cake with orange frosting on a wooden plate",
         # required=True,
         # a round cake with orange frosting on a wooden plate A cat sitting next to a mirror
         # a Golden Retriever standing on the groud
@@ -435,7 +352,7 @@ def parse_args():
     parser.add_argument(
         "--target",
         type=str,
-        default= "a red bird on the tree",
+        default= "a square cake with orange frosting on a wooden plate",
         #"a Golden Retriever",
         # a silver cat  sculpture standing on the groud
         # required=True,
@@ -445,7 +362,7 @@ def parse_args():
     parser.add_argument(
         "--blended_word",
         type=str,
-        default="bird bird",
+        default="cake cake",
         help="Blended word needed for P2P",
     )
     parser.add_argument(
@@ -485,12 +402,12 @@ def parse_args():
     parser.add_argument(
         "--guidance_scale",
         type=float,
-        default=7.5,
+        default=0.8,
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="output_test_regular_1205",
+        default="output_res_1125",
         help="Save editing results",
     )
     parser.add_argument(
@@ -608,8 +525,8 @@ def regulize_cross_attention(attn_dict):
     return reguliazed_cross_attn_dict
 
 
+#提出这种region-based-dynamic-guidance 是为了解决这种local edit的， generate mask 的时候需要原始的index ，看下>>
 
-#NOTE: this function is not used!
 def generate_mask(attn_dict, idx: int, res=64):
     mask = None
     for key in attn_dict:

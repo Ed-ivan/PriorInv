@@ -15,8 +15,8 @@ import torch.nn.functional as F
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 from utils.control_utils import load_512, make_controller
-# from P2P.SPDInv import SourcePromptDisentanglementInversion
-from P2P.CFGInv_withloss import CFGInversion
+from P2P.SPDInv import SourcePromptDisentanglementInversion
+
 
 # this file is to run rescontruction results 
 
@@ -67,10 +67,9 @@ def recontruction(
                 context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
             else:
                 context = torch.cat([uncond_embeddings_, text_embeddings])
-            # 倒是不如直接 传入一些latents 
             latents = ptp_utils.diffusion_step(model,controller,latents, context, t, guidance_scale,
                                                low_resource=False,
-                                               inference_stage=inference_stage, x_stars=x_stars,prox=None, i=i, **kwargs)
+                                               inference_stage=inference_stage, x_stars=x_stars, i=i, **kwargs)
     if return_type == 'image':
         image = ptp_utils.latent2image(model.vae, latents)
     else:
@@ -85,7 +84,7 @@ def P2P_inversion_and_recontruction(
         prompt_src,
         prompt_tar,
         output_dir='output',
-        guidance_scale=5.0,
+        guidance_scale=7.5,
         npi_interp=0,
         cross_replace_steps=0.8,
         self_replace_steps=0.6,
@@ -109,15 +108,13 @@ def P2P_inversion_and_recontruction(
     ldm_stable = StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", scheduler=scheduler).to(
         device)
     
-    SPD_inversion = CFGInversion(ldm_stable, K_round=K_round, num_ddim_steps=num_of_ddim_steps,
+    SPD_inversion = SourcePromptDisentanglementInversion(ldm_stable, K_round=K_round, num_ddim_steps=num_of_ddim_steps,
                                                          learning_rate=learning_rate, delta_threshold=delta_threshold,
                                                          enable_threshold=enable_threshold)
     (image_gt, image_enc, image_enc_latent), x_stars, uncond_embeddings = SPD_inversion.invert(
         image_path, prompt_src, offsets=offsets, npi_interp=npi_interp, verbose=True)
 
     z_inverted_noise_code = x_stars[-1]
-
-    # 如果是修改的话应该从下面入手， 
     
     del SPD_inversion
 
@@ -128,7 +125,7 @@ def P2P_inversion_and_recontruction(
 
     images, _ = recontruction(ldm_stable, prompts,latent=z_inverted_noise_code,
                             num_inference_steps=num_of_ddim_steps,
-                            #TODO:记得修改一下 
+                            #TODO: 记得修改一下 
                             #guidance_scale=1,
                             guidance_scale=guidance_scale,
                             uncond_embeddings=uncond_embeddings,
@@ -142,53 +139,47 @@ def parse_args():
     parser.add_argument(
         "--input",
         type=str,
-        default="images/000000000001.jpg",
-        # /home/user/jin/SPDInv/images/gnochi_mirror.jpeg
-        # images/000000000008.jpg
+        default="images/000000000005.jpg",
         # required=True,
         help="Image path",
     )
     parser.add_argument(
         "--source",
         type=str,
-        default="a round cake with orange frosting on a wooden plate",
+        default="a cat standing on the ground",
         # required=True,
-        # a round cake with orange frosting on a wooden plate A cat sitting next to a mirror
-        # a Golden Retriever standing on the groud
         help="Source prompt",
     )
     parser.add_argument(
         "--target",
         type=str,
-        default= "a square cake with orange frosting on a wooden plate",
+        default= "a cat  and  a dog standing on the ground",
         #"a Golden Retriever",
-        # a silver cat  sculpture standing on the groud
         # required=True,
-        # a square cake with orange frosting on a wooden plate
         help="Target prompt",
     )
     parser.add_argument(
         "--blended_word",
         type=str,
-        default="dog cat",
+        default="cat cat",
         help="Blended word needed for P2P",
     )
     parser.add_argument(
         "--K_round",
         type=int,
-        default=25,
+        default=20,
         help="Optimization Round",
     )
     parser.add_argument(
         "--num_of_ddim_steps",
         type=int,
-        default=50,
+        default=500,
         help="Blended word needed for P2P",
     )
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=0.001,
+        default=0.01,
     )
     parser.add_argument(
         "--delta_threshold",
@@ -210,7 +201,7 @@ def parse_args():
     parser.add_argument(
         "--guidance_scale",
         type=float,
-        default=1.0,
+        default=1,
     )
     parser.add_argument(
         "--output",
