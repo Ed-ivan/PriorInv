@@ -14,7 +14,7 @@ from torchvision import transforms
 import torch.nn.functional as F
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-from utils.control_utils import load_512, make_controller,save_attention_map,AttentionStore
+from utils.control_utils import load_512, make_controller,save_attention_map,AttentionStore,SelfAttentionStore
 # from P2P.SPDInv import SourcePromptDisentanglementInversion
 from P2P.CFGInv_withloss import CFGInversion
 from sklearn.decomposition import PCA
@@ -118,41 +118,6 @@ def save_noise(noise_pred_con, noise_pred_ucon, t, output_dir='output_noise'):
     '''
 
 
-
-class SelfAttentionStore(AttentionStore):
-    @staticmethod
-    def get_empty_store():
-        return {"down_self": [], "mid_self": [], "up_self": []}
-    #   使用的是 attend 环境别忘记了
-    
-    def forward(self, attn, is_cross: bool, place_in_unet: str):
-        key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
-        if attn.shape[1] <= 32 ** 2:  # avoid memory overhead
-            if not is_cross:
-                self.step_store[key].append(attn)
-        return attn
-
-    def avg_attention_map(self):
-        attn_size={}
-        for key in self.attention_store:
-            attn_size[key]={}
-            for item in self.attention_store[key]:
-                shape = item.shape[1]
-                if shape not in attn_size[key]:
-                    attn_size[key][shape] = []
-                attn_size[key][shape].append(item)    
-        averaged_attn = {}
-        for key in attn_size:
-            averaged_attn[key] = {}
-            for shape in attn_size[key]:
-                attn_group = torch.stack(attn_size[key][shape], dim=0)
-                averaged_attn[key][shape] = attn_group.mean(dim=0)
-        return averaged_attn
-
-
-    def __init__(self):
-        super(SelfAttentionStore, self).__init__()
-        
 
 def editing_p2p_with_regular_new(
         model,

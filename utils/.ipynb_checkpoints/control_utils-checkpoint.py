@@ -233,25 +233,21 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
             attn = attn.reshape(self.batch_size, h, *attn.shape[1:])
             # 这代码 写的可以 ，将两者存到 controller中，
             attn_base, attn_repalce = attn[0], attn[1:]
-            attn_base_copy= attn_base.detach().clone()
             if is_cross:
                 ###################### add code of cross attention regularization  ########################
                 key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
                 if self.ref_attn_dict is not None:
-                    #TODO： 应该怎么使用 self_attention进行 regular? 并且
-                    if attn_base.shape[1] <= 32**2:
-                        item = self.ref_attn_dict[key.replace('cross','self')][attn_base.shape[1]]
-                        assert attn_base.shape[0] == item[:attn_base.shape[0]].shape[0] ,"ref dim is not same with edit"
-                        attn_base_copy = attn_base.clone()
-                        # 在副本上进行修改 , 我靠绝了啊 ， attn 不能动的
-                        attn_base_copy.copy_(torch.einsum('bjc,bji->bic', attn_base_copy, item[:attn_base.shape[0]]))
+                    #TODO： 应该怎么使用 self_attention进行 regular? 
+                    breakpoint()
+                    item = self.ref_attn_dict[key.replace('cross','self')][attn.shape[1]]
+                    assert attn_base.shape[0] == item.shape[0] ,"ref dim is not same with edit"
+                    attn_base.copy_(torch.einsum('bjc,bji->bic', attn_base, item))
                     # 8 1024 , 77 ? 
                 ###################### add code of cross attention regularization  ########################
                 alpha_words = self.cross_replace_alpha[self.cur_step]
-                attn_repalce_new = self.replace_cross_attention(attn_base_copy, attn_repalce) * alpha_words + (
+                attn_repalce_new = self.replace_cross_attention(attn_base, attn_repalce) * alpha_words + (
                             1 - alpha_words) * attn_repalce
                 attn[1:] = attn_repalce_new
-
             else:
                 attn[1:] = self.replace_self_attention(attn_base, attn_repalce, place_in_unet)
             attn = attn.reshape(self.batch_size * h, *attn.shape[2:])
