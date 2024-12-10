@@ -196,7 +196,7 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=str,
-        default="outputs/test_dynamic_guidance_1206_changeFile",
+        default="outputs/local_blend_self_atttention_regular_1210",
         help="Save editing results",
     )
     args = parser.parse_args()

@@ -102,7 +102,8 @@ def calculate_metric(metrics_calculator,metric, src_image, tgt_image, src_mask, 
     
 all_tgt_image_folders={
     "1_snp_inversion+p2p" : "snp/annotation_images",
-    "p2p" :"1102_prior_45_4e_guidace_0.2_0.8/annotation_images"
+    "p2p" :"outputs/test_dynamic_guidance_1206_changeFile/annotation_images"
+    # autodl-tmp/CFGInv/outputs/test_dynamic_guidance_1206_changeFile/annotation_images
     }
 
 

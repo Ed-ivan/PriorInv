@@ -29,9 +29,25 @@ class LocalBlend:
 
     def __call__(self, x_t, attention_store):
         self.counter += 1
-
+        #TODO: 这里面应该可以修改一下的吧 
         if self.counter > self.start_blend:
-            maps = attention_store["down_cross"][2:4] + attention_store["up_cross"][:3]
+            down_cross_attn = attention_store["down_cross"][2:4]
+            down_self_attn = attention_store["down_self"][2:4]
+            up_cross_attn = attention_store["up_cross"][:3]
+            up_self_attn = attention_store["up_self"][:3]
+            cross_attns_down =[]
+            cross_attns_up =[]
+            # for down
+            for cross_attn, self_attn in zip(down_cross_attn, down_self_attn):
+                result = torch.einsum('bjc,bji->bic', cross_attn, self_attn)
+                cross_attns_down.append(result)
+            # for up 
+            for cross_attn, self_attn in zip(up_cross_attn, up_self_attn):
+                result = torch.einsum('bjc,bji->bic', cross_attn, self_attn)
+                cross_attns_up.append(result)
+
+            maps = cross_attns_down + cross_attns_up
+
             maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 16, 16, MAX_NUM_WORDS) for item in maps]
             maps = torch.cat(maps, dim=1)
             mask = self.get_mask(maps, self.alpha_layers, True)

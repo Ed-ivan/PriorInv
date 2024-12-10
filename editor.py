@@ -42,10 +42,6 @@ def linear_schedule(t, guidance_scale, tau1=0.2, tau2=0.8):
 
 
 
-
-
-
-
 class Editor:
 
     def project_text_embeddings(text_embeddings:torch.Tensor,alpha,textalpha):
@@ -100,7 +96,7 @@ class Editor:
                 use_inversion_guidance=False,
                 dilate_mask=1,**kwargs):
         if edit_method=="p2p":
-            return self.edit_image_p2p_with_regular(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, num_of_ddim_steps=self.num_ddim_steps,
+            return self.edit_image_p2p(image_path, prompt_src, prompt_tar, guidance_scale=guidance_scale, num_of_ddim_steps=self.num_ddim_steps,
                                         cross_replace_steps=cross_replace_steps, self_replace_steps=self_replace_steps, 
                                         blend_word=blend_word, eq_params=eq_params, is_replace_controller=is_replace_controller)
         elif edit_method in ["null-text-inversion+p2p", "null-text-inversion+p2p_a800", "null-text-inversion+p2p_3090"]:

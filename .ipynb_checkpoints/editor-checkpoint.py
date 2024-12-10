@@ -1,7 +1,7 @@
 # 这个文件抽象出各个edit 方法 p2p ,negative-prompts ,mastrol等 
 import torch
 from P2P.scheduler_dev import DDIMSchedulerDev
-from utils.control_utils import EmptyControl, AttentionStore, make_controller
+from utils.control_utils import EmptyControl, AttentionStore, make_controller,SelfAttentionStore
 from diffusers import StableDiffusionPipeline
 from utils.utils import load_512, latent2image, txt_draw
 from typing import Optional, Union, List
@@ -39,7 +39,28 @@ def linear_schedule(t, guidance_scale, tau1=0.2, tau2=0.8):
 
     return guidance_scale
 
+
+
+
+
+
+
+
 class Editor:
+
+    def project_text_embeddings(text_embeddings:torch.Tensor,alpha,textalpha):
+        assert text_embeddings.shape[0]>1 , 'text_embeddings must have more than src and target'
+        normalizetext=torch.nn.functional.normalize(text_embeddings,dim=2)
+        b,n,c=normalizetext.shape
+        print(b,n,c)
+        normtext=normalizetext.view(n,c,1)
+        viewprompt=prompt_embeddings.view(n,1,c)
+        projtext=torch.matmul(viewprompt,normtext)
+        projtext=projtext*normtext
+        projtext=projtext.view(1,n,c)
+        projedit=prompt_embeddings-projtext
+        breakpoint()
+
     def __init__(self, method_list, device,delta_threshold,enable_threshold=True, num_ddim_steps=50,K_round=25,learning_rate=0.001) -> None:
         self.device=device
         self.method_list=method_list
@@ -162,7 +183,7 @@ class Editor:
         return_tensors="pt",
         )
         text_embeddings = self.ldm_stable.text_encoder(text_input.input_ids.to(self.ldm_stable.device))[0]
-        # [2,77.768] 
+        # [2,77.768]  [src , tar]
         max_length = text_input.input_ids.shape[-1]
         if uncond_embeddings is None:
             uncond_input = self.ldm_stable.tokenizer(
@@ -181,7 +202,7 @@ class Editor:
                     context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
                 else:
                     context = torch.cat([uncond_embeddings_, text_embeddings])
-                guidance_scale=linear_schedule(t, guidance_scale)
+                #guidance_scale=linear_schedule(t, guidance_scale)
                 latents = ptp_utils.diffusion_step(self.ldm_stable, controller, latents, context, t, guidance_scale,
                                                low_resource=False,
                                                inference_stage=inference_stage, x_stars=x_stars, i=i, **kwargs)
@@ -190,6 +211,134 @@ class Editor:
         # you need to change this when you have a high ram 
         #return Image.fromarray(np.concatenate((image_instruct, image_gt, images[0],images[-1]),axis=1))
         return Image.fromarray(np.concatenate((image_gt, images[0],images[-1]),axis=1))
+
+
+
+
+    def edit_image_p2p_with_regular(
+        self,
+        image_path,
+        prompt_src,
+        prompt_tar,
+        num_of_ddim_steps,
+        guidance_scale=7.5,
+        cross_replace_steps=0.4,
+        self_replace_steps=0.6,
+        generator: Optional[torch.Generator] = None,
+        blend_word=None,
+        npi_interp=0,
+        eq_params=None,
+        offsets=(0, 0, 0, 0),
+        inference_stage=True,
+        is_replace_controller=False,
+        num_inference_steps: int = 50,
+        **kwargs
+        #TODO： 这样写  
+    ):
+        image_gt = load_512(image_path)
+        prompts = [prompt_src, prompt_tar]
+        batch_size = len(prompts)
+        height = width = 512
+        
+
+        SPD_inversion = CFGInversion(self.ldm_stable, K_round=self.K_round, num_ddim_steps=num_of_ddim_steps,
+                                                         learning_rate=self.learning_rate, delta_threshold=self.delta_threshold,
+                                                         enable_threshold=self.enable_threshold)
+        (image_gt, image_enc, image_enc_latent), x_stars, uncond_embeddings = SPD_inversion.invert(
+        image_path, prompt_src, offsets=offsets, npi_interp=npi_interp, verbose=True)
+
+        z_inverted_noise_code = x_stars[-1]
+    
+        del SPD_inversion 
+
+        torch.cuda.empty_cache()
+        #controller = None
+        
+        #reconstruct_image = latent2image(model=self.ldm_stable.vae, latents=reconstruct_latent)[0]
+        #image_instruct = txt_draw(f"source prompt: {prompt_src}\ntarget prompt: {prompt_tar}")
+
+
+        if uncond_embeddings is None:
+            uncond_input = self.ldm_stable.tokenizer(
+            [""] * batch_size, padding="max_length", max_length=max_length, return_tensors="pt"
+         )
+            uncond_embeddings_ = self.ldm_stable.text_encoder(uncond_input.input_ids.to(self.ldm_stable.device))[0]
+        else:
+            uncond_embeddings_ = None
+
+        ########## edit ##########
+        #first loop
+        prompt_srcs= [prompt_src,prompt_src]
+        ref_controller  = SelfAttentionStore()
+        ptp_utils.register_attention_control(self.ldm_stable, ref_controller)
+        text_input_src = self.ldm_stable.tokenizer(
+        prompt_srcs,
+        padding="max_length",
+        max_length=self.ldm_stable.tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",)
+        text_embeddings = self.ldm_stable.text_encoder(text_input_src.input_ids.to(self.ldm_stable.device))[0]
+        # [2,77.768] 
+        max_length = text_input_src.input_ids.shape[-1]
+        latent, latents = ptp_utils.init_latent(z_inverted_noise_code, self.ldm_stable, height, width, generator, batch_size)
+      
+        start_time = num_inference_steps
+        self.ldm_stable.scheduler.set_timesteps(num_inference_steps)
+
+        with torch.no_grad():
+            for i, t in enumerate(tqdm(self.ldm_stable.scheduler.timesteps[-start_time:], total= num_inference_steps)):
+                if uncond_embeddings_ is None:
+                    context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
+                else:
+                    context = torch.cat([uncond_embeddings_, text_embeddings])
+                #guidance_scale=linear_schedule(t, guidance_scale)
+                latents = ptp_utils.diffusion_step(self.ldm_stable, ref_controller, latents, context, t, guidance_scale,
+                                               low_resource=False,
+                                               inference_stage=inference_stage, x_stars=x_stars, i=i, **kwargs)
+    
+        avg_self_attn_dict= ref_controller.avg_attention_map()
+        
+        # second loop
+        cross_replace_steps = {
+            'default_': cross_replace_steps,
+        }
+        controller = make_controller(self.ldm_stable, prompts, is_replace_controller, cross_replace_steps, self_replace_steps,
+                                  blend_word, eq_params, num_ddim_steps=num_of_ddim_steps)
+        controller.set_ref_attn_dict(avg_self_attn_dict)
+        ptp_utils.register_attention_control(self.ldm_stable, controller)
+    # 应该是在 进行了注册 
+        
+
+        text_input = self.ldm_stable.tokenizer(
+        prompts,
+        padding="max_length",
+        max_length=self.ldm_stable.tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+        )
+        text_embeddings = self.ldm_stable.text_encoder(text_input.input_ids.to(self.ldm_stable.device))[0]
+        # [2,77.768]  [src , tar]
+        max_length = text_input.input_ids.shape[-1]
+        latent, latents = ptp_utils.init_latent(z_inverted_noise_code, self.ldm_stable, height, width, generator, batch_size)
+        start_time = num_inference_steps
+        self.ldm_stable.scheduler.set_timesteps(num_inference_steps)
+        with torch.no_grad():
+            for i, t in enumerate(tqdm(self.ldm_stable.scheduler.timesteps[-start_time:], total= num_inference_steps)):
+                if uncond_embeddings_ is None:
+                    context = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), text_embeddings])
+                else:
+                    context = torch.cat([uncond_embeddings_, text_embeddings])
+                #guidance_scale=linear_schedule(t, guidance_scale)
+                latents = ptp_utils.diffusion_step(self.ldm_stable, controller, latents, context, t, guidance_scale,
+                                               low_resource=False,
+                                               inference_stage=inference_stage, x_stars=x_stars, i=i, **kwargs)
+            
+            images = ptp_utils.latent2image(self.ldm_stable.vae, latents)
+        # you need to change this when you have a high ram 
+        #return Image.fromarray(np.concatenate((image_instruct, image_gt, images[0],images[-1]),axis=1))
+        return Image.fromarray(np.concatenate((image_gt, images[0],images[-1]),axis=1))
+
+        
 
 
     #TODO:  因为其实并不打算使用什么关于 npi的东西，所以  prox,npi

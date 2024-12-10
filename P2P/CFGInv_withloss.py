@@ -295,7 +295,7 @@ class CFGInversion(Inversion):
         super(CFGInversion,self).__init__(model,K_round,num_ddim_steps,learning_rate,delta_threshold,
         enable_threshold,scale,prior_lambda)
 
-
+#this idea is from  020 
 class CFGInversionWithRegular(Inversion):
     @torch.no_grad()
     def SPD_loop(self, latent):
@@ -373,3 +373,93 @@ class CFGInversionWithRegular(Inversion):
         self.lambda_kl = lambda_kl
         self.num_reg_steps = num_reg_steps
         
+
+# which is about src and target 
+class BlendInversion(CFGInversion):
+    def invert(self, image_path: str, prompt_src: str, prompt_tar:str,offsets=(0, 0, 0, 0), npi_interp=0.0, verbose=False):
+        self.init_prompt(prompt_src,prompt_tar)
+        ptp_utils.register_attention_control(self.model, None)
+
+        image_gt = load_512(image_path, *offsets)
+
+        image_rec, ddim_latents, image_rec_latent = self.SPD_inversion(image_gt)
+        uncond_embeddings, cond_embeddings = self.context.chunk(2)
+        if npi_interp > 0.0:
+            cond_embeddings = ptp_utils.slerp_tensor(npi_interp, cond_embeddings, uncond_embeddings)
+        uncond_embeddings = [cond_embeddings] * self.num_ddim_steps
+        return (image_gt, image_rec, image_rec_latent), ddim_latents, uncond_embeddings
+    
+
+
+    @torch.no_grad()
+    def init_prompt(self, prompt: str,prompt_tar:str):
+        uncond_input = self.model.tokenizer(
+            [""], padding="max_length", max_length=self.model.tokenizer.model_max_length,
+            return_tensors="pt"
+        )
+        uncond_embeddings = self.model.text_encoder(uncond_input.input_ids.to(self.model.device))[0]
+        text_input = self.model.tokenizer(
+            [prompt],
+            padding="max_length",
+            max_length=self.model.tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        text_input_tar = self.model.tokenizer(
+            [prompt_tar],
+            padding="max_length",
+            max_length=self.model.tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        text_embeddings = self.model.text_encoder(text_input.input_ids.to(self.model.device))[0]
+        text_embeddings_tar = self.model.text_encoder(text_input.input_ids.to(self.model.device))[0]
+        self.context = torch.cat([uncond_embeddings, self.blend_ratio*text_embeddings +(1-self.blend_ratio) * text_embeddings_tar])
+        self.prompt = prompt
+
+    def __init__(self, model, K_round=25, num_ddim_steps=50, learning_rate=0.001, delta_threshold=5e-6,
+                 enable_threshold=True,scale =1.0,prior_lambda=0.00045,blend_ratio=0.2):
+        super(CFGInversion,self).__init__(model,K_round,num_ddim_steps,learning_rate,delta_threshold,
+        enable_threshold,scale,prior_lambda)
+        self.blend_ratio= blend_ratio
+        #TODO: 这个应该是 随着时间变化的啊， 我真的是吐了啊，没事先不要慌张, 我记得有一个来着是怎么来做的呢？
+
+# 既然 反演过程中应该是考虑 编辑文本的,如何考虑呢 ？（1）最简单的方法   text embeddings空间中进行插值   
+# (2) delta的方法 使用 a*e() + (1-a)*e( ) 这种方法  实现的时候用的比较 tricky的实现方法 直接将 uncond置为了prompt_src 
+class DeltaInversion(CFGInversion):
+    
+    @torch.no_grad()
+    def init_prompt(self, prompt_src: str,prompt_tar:str):
+        uncond_input = self.model.tokenizer(
+            [prompt_src], padding="max_length", max_length=self.model.tokenizer.model_max_length,
+            return_tensors="pt"
+        )
+        uncond_embeddings = self.model.text_encoder(uncond_input.input_ids.to(self.model.device))[0]
+
+        text_input_tar = self.model.tokenizer(
+            [prompt_tar],
+            padding="max_length",
+            max_length=self.model.tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        text_embeddings = self.model.text_encoder(text_input.input_ids.to(self.model.device))[0]
+        self.context = torch.cat([uncond_embeddings, text_embeddings])
+        self.prompt = prompt_tar
+
+
+
+    def invert(self, image_path: str, prompt_src: str,  prompt_tar:str,offsets=(0, 0, 0, 0), npi_interp=0.0, verbose=False):
+        self.init_prompt(prompt_src,prompt_tar)
+        ptp_utils.register_attention_control(self.model, None)
+
+        image_gt = load_512(image_path, *offsets)
+
+        image_rec, ddim_latents, image_rec_latent = self.SPD_inversion(image_gt)
+        uncond_embeddings, cond_embeddings = self.context.chunk(2)
+        if npi_interp > 0.0:
+            cond_embeddings = ptp_utils.slerp_tensor(npi_interp, cond_embeddings, uncond_embeddings)
+        uncond_embeddings = [cond_embeddings] * self.num_ddim_steps
+        return (image_gt, image_rec, image_rec_latent), ddim_latents, uncond_embeddings
+    
